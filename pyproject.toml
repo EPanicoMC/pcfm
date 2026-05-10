@@ -15,6 +15,7 @@ ignore = []
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+pythonpath = [".", "packages/domain"]
 
 # ── Per i package interni vedi: ──────────────────────────────────────────────
 #   packages/domain/pyproject.toml
