@@ -214,6 +214,7 @@ def _upsert_engagement_owner(db: Session, name: str | None, role: str) -> None:
     existing = db.query(DimEngagementOwner).filter(DimEngagementOwner.name == name).first()
     if not existing:
         db.add(DimEngagementOwner(name=name, role=role))
+        db.flush()
 
 
 def _row_to_fact_kwargs(row: ProjectRow) -> dict[str, Any]:
