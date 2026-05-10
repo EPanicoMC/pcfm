@@ -253,7 +253,8 @@ def test_get_project_forecast_returns_keys(db_with_timesheet):
     assert "run_rate" in result
     assert "residuo_ore" in result
     assert "data_esaurimento" in result
-    assert "scenari" in result
+    assert "scenari_nr" in result
+    assert "scenari_ore" in result
     assert "forecast_fy_net_revenue" in result
     assert "monthly_actuals" in result
 

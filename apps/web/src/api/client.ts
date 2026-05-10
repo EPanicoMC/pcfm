@@ -42,6 +42,7 @@ export interface MonthlyActual {
   month_id: string
   hours: number
   net_revenue: number
+  is_partial?: boolean
 }
 
 export interface RunRate {
@@ -49,6 +50,24 @@ export interface RunRate {
   net_revenue: number | null
   window: string
   months_used: number
+  complete_months_available: number
+}
+
+export interface ResourceBreakdown {
+  resource_id: string
+  resource_name: string
+  job_title: string | null
+  hours: number
+  net_revenue: number
+  gross_revenue: number
+  blended_net_rate: number | null
+  pct_nr: number | null
+}
+
+export interface FutureMonth {
+  month_id: string
+  projected_nr: number | null
+  is_override: boolean
 }
 
 export interface ForecastOverride {
@@ -63,23 +82,33 @@ export interface ProjectForecast {
   project_id: string
   project_title: string | null
   project_status: string | null
+  client_name: string | null
+  client_group: string | null
+  engagement_manager: string | null
   fy: number
   ts_hours_total: number
   ts_net_revenue_total: number
   iow_hours_total: number | null
   iow_net_revenue: number | null
+  iow_contract_value: number | null
+  pct_consumo_nr: number | null
+  pct_consumo_ore: number | null
   run_rate: RunRate
   residuo_ore: number | null
   residuo_eur: number | null
-  mesi_residui: number | null
+  mesi_residui_nr: number | null
+  mesi_residui_ore: number | null
   data_esaurimento: string | null
   at_risk: boolean
-  scenari: { low: number | null; base: number | null; high: number | null }
+  scenari_nr: { low: number | null; base: number | null; high: number | null }
+  scenari_ore: { low: number | null; base: number | null; high: number | null }
   forecast_fy_net_revenue: number | null
   actual_ytd_net_revenue: number
-  future_months: string[]
+  actual_ytd_hours: number
+  future_months_detail: FutureMonth[]
   overrides: ForecastOverride[]
   monthly_actuals: MonthlyActual[]
+  resources: ResourceBreakdown[]
 }
 
 export interface DashboardData {
@@ -148,20 +177,32 @@ export const api = {
     return req<Project[]>(`/projects${q.toString() ? `?${q}` : ''}`)
   },
 
-  project: (id: string) => req<Project & { monthly_timesheet: MonthlyActual[] }>(`/projects/${encodeURIComponent(id)}`),
+  project: (id: string) =>
+    req<Project & { monthly_timesheet: MonthlyActual[] }>(`/projects/${encodeURIComponent(id)}`),
 
   forecast: (id: string, window?: string) =>
-    req<ProjectForecast>(`/projects/${encodeURIComponent(id)}/forecast${window ? `?window=${window}` : ''}`),
+    req<ProjectForecast>(
+      `/projects/${encodeURIComponent(id)}/forecast${window ? `?window=${window}` : ''}`
+    ),
 
-  setOverride: (projectId: string, monthId: string, body: { override_net_revenue?: number | null; note?: string | null }) =>
-    req<ForecastOverride>(`/projects/${encodeURIComponent(projectId)}/forecast/override/${monthId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+  setOverride: (
+    projectId: string,
+    monthId: string,
+    body: { override_net_revenue?: number | null; note?: string | null }
+  ) =>
+    req<ForecastOverride>(
+      `/projects/${encodeURIComponent(projectId)}/forecast/override/${monthId}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }
+    ),
 
   deleteOverride: (projectId: string, monthId: string) =>
-    fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/forecast/override/${monthId}`, { method: 'DELETE' }),
+    fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/forecast/override/${monthId}`, {
+      method: 'DELETE',
+    }),
 
   assumptions: () => req<Assumption[]>('/assumptions'),
 
