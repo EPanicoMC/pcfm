@@ -64,6 +64,10 @@ async def preview_import(
             result = preview_timesheet_import(tmp_path, filename, db)
         else:
             raise HTTPException(status_code=422, detail="Tipo file non riconosciuto. Atteso file 9 (progetti) o file 8 (timesheet).")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -86,8 +90,10 @@ async def confirm_import(
             result = run_timesheet_import(db, tmp_path, original_filename=filename)
         else:
             raise HTTPException(status_code=422, detail="Tipo file non riconosciuto.")
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
     finally:
         tmp_path.unlink(missing_ok=True)
 
