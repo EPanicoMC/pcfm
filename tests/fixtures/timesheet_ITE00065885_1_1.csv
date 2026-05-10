@@ -1,0 +1,11 @@
+fy_month_week,fy,month_label,week_range,job_title,resource_name,document_item_text,hours_actual,gross_revenue,discount,wip_provision,net_revenue_actual,gross_rate,net_rate,resource_cost_center,resource_cost_center_name,resource_ou,resource_bu,resource_los,legal_entity,resource_id
+2026-09-40,FY26,2026-Mar,29 Mar - 04 Apr,Associate,Cosimo Lo Iacono,,4.0,660.0,-478.88,,181.12,165.0,45.28,IT25000492,PVT_CUSTOMER,P_CUSTOMER,ADV_PVT,ADVISORY,PwC Business Services Srl,50093556
+2026-09-40,FY26,2026-Mar,29 Mar - 04 Apr,Director,Alessandro Fonio,,8.0,3440.0,-2496.0,,944.0,430.0,118.0,IT25000492,PVT_CUSTOMER,P_CUSTOMER,ADV_PVT,ADVISORY,PwC Business Services Srl,50094832
+2026-09-40,FY26,2026-Mar,29 Mar - 04 Apr,Senior Associate,Alberto Galvan,,8.0,1840.0,-1335.04,,504.96,230.0,63.12,IT25000492,PVT_CUSTOMER,P_CUSTOMER,ADV_PVT,ADVISORY,PwC Business Services Srl,50098138
+2026-09-40,FY26,2026-Mar,29 Mar - 04 Apr,Senior Associate,Mihaela Denisa Ioance,,4.0,920.0,-667.52,,252.48,230.0,63.12,IT25000131,DTC_IT PMO&AGILE,C_ITPMO&AGIL,ADV_DT&CLOUD,ADVISORY,PwC Business Services Srl,50097928
+2026-10-41,FY26,2026-Apr,05 Apr - 11 Apr,Associate,Cosimo Lo Iacono,,8.0,1320.0,-957.76,,362.24,165.0,45.28,IT25000492,PVT_CUSTOMER,P_CUSTOMER,ADV_PVT,ADVISORY,PwC Business Services Srl,50093556
+2026-10-41,FY26,2026-Apr,05 Apr - 11 Apr,Director,Alessandro Fonio,,8.0,3440.0,-2496.0,,944.0,430.0,118.0,IT25000492,PVT_CUSTOMER,P_CUSTOMER,ADV_PVT,ADVISORY,PwC Business Services Srl,50094832
+2026-10-42,FY26,2026-Apr,12 Apr - 18 Apr,Manager,Monica Gardella,,8.0,1840.0,-1335.04,,504.96,230.0,63.12,IT25000492,PVT_CUSTOMER,P_CUSTOMER,ADV_PVT,ADVISORY,PwC Business Services Srl,50096580
+2026-10-43,FY26,2026-Apr,19 Apr - 25 Apr,Senior Associate,Diego Modonutti,,8.0,1840.0,-1335.04,,504.96,230.0,63.12,IT25000492,PVT_CUSTOMER,P_CUSTOMER,ADV_PVT,ADVISORY,PwC Business Services Srl,50093077
+2026-11-44,FY26,2026-May,26 Apr - 02 May,Partner,Alessandro Fonio,,8.0,4080.0,-2960.0,,1120.0,510.0,140.0,IT25000492,PVT_CUSTOMER,P_STR CNS,ADV_PVT,ADVISORY,PwC Business Services Srl,50094832
+2026-11-45,FY26,2026-May,03 May - 09 May,Associate,Cosimo Lo Iacono,,4.0,660.0,-478.88,,181.12,165.0,45.28,IT25000684,DTC_CLOUDENGINEERING,C_CLOUD,ADV_DT&CLOUD,ADVISORY,PwC Business Services Srl,50093556
