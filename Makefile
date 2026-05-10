@@ -32,7 +32,7 @@ install:
 
 start: migrate
 	@echo "Avvio PCFM..."
-	@$(VENV_BIN)/uvicorn apps.api.main:app --host 0.0.0.0 --port $(API_PORT) --reload &
+	@PYTHONPATH=packages/domain:. $(VENV_BIN)/uvicorn apps.api.app.main:app --host 0.0.0.0 --port $(API_PORT) --reload &
 	@sleep 2
 	@cd apps/web && npm run dev &
 	@sleep 2
@@ -40,7 +40,7 @@ start: migrate
 	@wait
 
 start-api: migrate
-	$(VENV_BIN)/uvicorn apps.api.main:app --host 0.0.0.0 --port $(API_PORT) --reload
+	PYTHONPATH=packages/domain:. $(VENV_BIN)/uvicorn apps.api.app.main:app --host 0.0.0.0 --port $(API_PORT) --reload
 
 start-web:
 	cd apps/web && npm run dev
@@ -48,7 +48,7 @@ start-web:
 test: test-api test-web
 
 test-api:
-	$(VENV_BIN)/pytest tests/ -v
+	PYTHONPATH=packages/domain:. $(VENV_BIN)/pytest tests/ -v
 
 test-web:
 	cd apps/web && npm run test
@@ -64,10 +64,10 @@ format:
 migrate:
 	@mkdir -p data/backups data/imports data/exports
 	$(VENV_BIN)/alembic upgrade head
-	$(VENV_BIN)/python scripts/seed.py
+	PYTHONPATH=packages/domain:. $(VENV_BIN)/python scripts/seed.py
 
 backup:
-	$(VENV_BIN)/python scripts/backup_now.py
+	PYTHONPATH=packages/domain:. $(VENV_BIN)/python scripts/backup_now.py
 
 seed:
-	$(VENV_BIN)/python scripts/seed.py
+	PYTHONPATH=packages/domain:. $(VENV_BIN)/python scripts/seed.py
