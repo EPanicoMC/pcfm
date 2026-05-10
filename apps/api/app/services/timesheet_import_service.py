@@ -172,6 +172,7 @@ def _upsert_cost_center(db: Session, row: TimesheetRow) -> None:
             los=row.resource_los,
             legal_entity=row.legal_entity,
         ))
+        db.flush()
 
 
 def _upsert_resource(db: Session, row: TimesheetRow) -> None:
@@ -184,6 +185,7 @@ def _upsert_resource(db: Session, row: TimesheetRow) -> None:
             resource_cost_center=row.resource_cost_center,
             legal_entity=row.legal_entity,
         ))
+        db.flush()
     else:
         if row.job_title:
             existing.job_title = row.job_title
@@ -204,6 +206,7 @@ def _upsert_week(db: Session, row: TimesheetRow) -> None:
             fy_month=fy_month,
             fy_month_week=row.fy_month_week,
         ))
+        db.flush()
 
 
 def _ensure_fiscal_calendar(db: Session, fy: int) -> None:
