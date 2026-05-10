@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .routers import assumptions, dashboard, forecast, imports, projects
 
@@ -22,3 +25,17 @@ app.include_router(assumptions.router)
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+# ── SPA fallback: serve React build in produzione ─────────────────────────────
+_dist = Path(__file__).resolve().parents[3] / "apps" / "web" / "dist"
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    if not _dist.exists():
+        return {"detail": "Frontend non ancora buildato. Esegui: make build"}
+    candidate = _dist / full_path
+    if candidate.is_file():
+        return FileResponse(str(candidate))
+    return FileResponse(str(_dist / "index.html"))

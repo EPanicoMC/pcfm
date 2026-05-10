@@ -1,4 +1,4 @@
-.PHONY: install start start-api start-web test lint format migrate backup seed help
+.PHONY: install build start start-prod start-api start-web test lint format migrate backup seed help
 
 PYTHON := python3
 PIP := $(PYTHON) -m pip
@@ -11,8 +11,10 @@ WEB_PORT := 5173
 help:
 	@echo "PCFM — comandi disponibili:"
 	@echo "  make install      Installa dipendenze Python e Node"
-	@echo "  make start        Avvia API + Web e apre il browser"
-	@echo "  make start-api    Solo FastAPI su :$(API_PORT)"
+	@echo "  make build        Build React (apps/web/dist)"
+	@echo "  make start        Avvia API + Web (dev) e apre il browser"
+	@echo "  make start-prod   Avvia solo FastAPI in produzione su :$(API_PORT)"
+	@echo "  make start-api    Solo FastAPI (dev) su :$(API_PORT)"
 	@echo "  make start-web    Solo Vite su :$(WEB_PORT)"
 	@echo "  make test         Esegui tutti i test (pytest + vitest)"
 	@echo "  make test-api     Solo pytest"
@@ -30,14 +32,25 @@ install:
 	$(VENV_BIN)/pip install -e "apps/api[dev]"
 	cd apps/web && npm install
 
+build:
+	cd apps/web && npm run build
+	@echo "✅ Build completata → apps/web/dist/"
+
 start: migrate
-	@echo "Avvio PCFM..."
+	@echo "Avvio PCFM (dev)..."
 	@PYTHONPATH=packages/domain:. $(VENV_BIN)/uvicorn apps.api.app.main:app --host 0.0.0.0 --port $(API_PORT) --reload &
 	@sleep 2
 	@cd apps/web && npm run dev &
 	@sleep 2
 	@open http://localhost:$(WEB_PORT) || xdg-open http://localhost:$(WEB_PORT) || true
 	@wait
+
+start-prod: migrate build
+	@echo "Avvio PCFM (produzione) su http://localhost:$(API_PORT)"
+	@sleep 1
+	@open http://localhost:$(API_PORT) || true
+	PYTHONPATH=packages/domain:. $(VENV_BIN)/uvicorn apps.api.app.main:app \
+		--host 0.0.0.0 --port $(API_PORT) --log-level info
 
 start-api: migrate
 	PYTHONPATH=packages/domain:. $(VENV_BIN)/uvicorn apps.api.app.main:app --host 0.0.0.0 --port $(API_PORT) --reload
