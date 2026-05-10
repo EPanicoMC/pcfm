@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import forecast, imports, projects
+from .routers import assumptions, dashboard, forecast, imports, projects
 
 app = FastAPI(title="PCFM API", version="0.1.0")
 
@@ -15,6 +15,8 @@ app.add_middleware(
 app.include_router(imports.router)
 app.include_router(projects.router)
 app.include_router(forecast.router)
+app.include_router(dashboard.router)
+app.include_router(assumptions.router)
 
 
 @app.get("/api/health")
