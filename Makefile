@@ -63,7 +63,8 @@ format:
 
 migrate:
 	@mkdir -p data/backups data/imports data/exports
-	$(VENV_BIN)/alembic -c apps/api/alembic.ini upgrade head
+	$(VENV_BIN)/alembic upgrade head
+	$(VENV_BIN)/python scripts/seed.py
 
 backup:
 	$(VENV_BIN)/python scripts/backup_now.py

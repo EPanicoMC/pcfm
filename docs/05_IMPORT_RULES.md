@@ -144,6 +144,8 @@ shutil.copy2("./data/pcfm.db", f"./data/backups/{backup_name}")
 
 Il percorso del backup è salvato in `imports.backup_path`.
 
+**Retention**: dopo ogni backup, i file più vecchi di **2 anni** vengono eliminati automaticamente da `./data/backups/`.
+
 ---
 
 ## Flusso import completo (server-side)

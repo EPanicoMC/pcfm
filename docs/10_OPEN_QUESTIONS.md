@@ -7,16 +7,6 @@
 
 ## Aperte
 
-### OQ-001 — Significato di "Real (%) To Do" nel file 9
-
-**Problema**: La colonna `Real (%) To Do` ha valore 32 per `ITE00041182.1.1`, un progetto con `hours_actual = 6182.5` e `iow_hours_total = 6720` (92% ore consumate). Il valore non corrisponde al residuo ore calcolabile da noi.
-
-**ASSUNZIONE PROVVISORIA** (2026-05-10): È una metrica opaca del BI sorgente, forse basata su logiche di billing/WIP non disponibili nei nostri dati. La importiamo as-is nel campo `bi_real_pct_todo` e la mostriamo in UI come "To Do (BI)" senza interpretarla.
-
-**Chiudere quando**: l'utente chiarisce il calcolo oppure conferma che va trattata come opaca.
-
----
-
 ### OQ-002 — Formato "FYMonthWeek_PAR": significato del terzo campo
 
 **Problema**: Il valore `"2026-09-40"` ha tre componenti. Il primo (2026) = anno FY, il secondo (09) = mese fiscale (luglio=01, ..., marzo=09) è verificato. Il terzo (40) = ?
@@ -47,16 +37,6 @@
 
 ---
 
-### OQ-005 — Policy di retention dei backup
-
-**Problema**: I backup si accumulano nel tempo. Non è stato definito quanti tenerne.
-
-**ASSUNZIONE PROVVISORIA** (2026-05-10): Manteniamo gli ultimi 10 backup. Ad ogni nuovo backup, se il conteggio supera 10, eliminiamo il più vecchio. Implementato in `scripts/backup-now.py`.
-
-**Chiudere quando**: l'utente conferma o indica un numero diverso.
-
----
-
 ### OQ-006 — `hours_actual = 0` nel timesheet
 
 **Problema**: Il campione include righe con `hours_actual = 0`. Potrebbero essere righe di correzione o storno.
@@ -67,16 +47,20 @@
 
 ---
 
-### OQ-007 — Nomi file timesheet in produzione
+## Chiuse
 
-**Problema**: Il campione si chiama `data (8).xlsx`. In produzione, i file dovranno chiamarsi `ITE00065885.1.1.xlsx`. Non è chiaro se l'utente rinominerà i file manualmente prima dell'import.
+### OQ-001 — Significato di "Real (%) To Do" nel file 9 ✓
 
-**ASSUNZIONE PROVVISORIA** (2026-05-10): La UI di import mostrerà il `project_id` estratto dal filename e chiederà conferma. Se il filename non matcha il pattern `ITE\d+\.\d+\.\d+`, la UI mostrerà un warning e permetterà all'utente di correggere manualmente il `project_id` prima della conferma.
-
-**Chiudere quando**: l'utente conferma come esporta e nomina i file dal BI.
+**Risolto** (2026-05-10): Trattare come metrica opaca del BI. Importata as-is in `bi_real_pct_todo`, mostrata in UI come "To Do (BI)" senza interpretazione.
 
 ---
 
-## Chiuse
+### OQ-005 — Policy di retention dei backup ✓
 
-*(nessuna ancora)*
+**Risolto** (2026-05-10): Retention = **2 anni** (non numero fisso di file). I backup più vecchi di 2 anni vengono eliminati automaticamente dopo ogni nuovo backup.
+
+---
+
+### OQ-007 — Nomi file timesheet in produzione ✓
+
+**Risolto** (2026-05-10): I file timesheet esportati dal BI hanno già il codice progetto come nome (es. `ITE00065885.1.1.xlsx`). Il pattern è garantito dalla sorgente. La UI non ha bisogno di permettere correzione manuale del `project_id` estratto dal filename.
