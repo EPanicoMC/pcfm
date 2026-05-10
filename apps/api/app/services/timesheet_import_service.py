@@ -133,6 +133,7 @@ def _apply_upsert(db: Session, parsed: TimesheetImportResult, import_id: int) ->
         existing = db.get(FactTimesheet, row.timesheet_id)
         if existing is None:
             db.add(_make_fact(row, import_id))
+            db.flush()  # rende il record visibile alle get() successive nella stessa sessione
             counts["inserted"] += 1
         else:
             changed = _detect_changes(existing, row)
