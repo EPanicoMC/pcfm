@@ -2,13 +2,14 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.dimensions import DimClient
 from ..models.facts import FactProject, FactTimesheet
+from ..services.detail_service import get_project_detail
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -52,6 +53,15 @@ def list_projects(
     ts_map = {r.project_id: r for r in ts_agg}
 
     return [_enrich(p, ts_map.get(p.project_id), db) for p in projects]
+
+
+@router.get("/{project_id}/detail")
+def project_detail_view(project_id: str, db: Session = Depends(get_db)):
+    """Vista dettaglio: KPI finanziari, BU/CC breakdown, caricamenti settimanali, forecast."""
+    result = get_project_detail(db, project_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @router.get("/{project_id}")

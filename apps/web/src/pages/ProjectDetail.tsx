@@ -1,18 +1,17 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import {
-  Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Legend, ComposedChart, Line,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts'
-import { api } from '../api/client'
+import { api, BuBreakdown, WeeklyLoad } from '../api/client'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function fmtEur(n: number | null | undefined, decimals = 0) {
+function fmtEur(n: number | null | undefined, dec = 0) {
   if (n == null) return '—'
   return new Intl.NumberFormat('it-IT', {
-    style: 'currency', currency: 'EUR', maximumFractionDigits: decimals,
+    style: 'currency', currency: 'EUR', maximumFractionDigits: dec,
   }).format(n)
 }
 
@@ -21,445 +20,22 @@ function fmtN(n: number | null | undefined, dec = 1) {
   return n.toLocaleString('it-IT', { maximumFractionDigits: dec })
 }
 
-function PctBar({ value, color = 'bg-blue-500' }: { value: number | null; color?: string }) {
-  if (value == null) return <span className="text-slate-400 text-sm">—</span>
-  const pct = Math.min(Math.max(value, 0), 100)
-  const barColor = value > 90 ? 'bg-red-500' : value > 70 ? 'bg-amber-400' : color
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
-        <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="text-sm font-semibold w-14 text-right">{value.toFixed(1)}%</span>
-    </div>
-  )
+function fmtDate(iso: string | null | undefined) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: '2-digit' })
 }
 
-// ── Main component ─────────────────────────────────────────────────────────────
-
-export default function ProjectDetail() {
-  const { id } = useParams<{ id: string }>()
-  const projectId = decodeURIComponent(id ?? '')
-  const [window, setWindow] = useState<string>('last_month')
-  const [editOverride, setEditOverride] = useState<{ month_id: string; value: string } | null>(null)
-  const qc = useQueryClient()
-
-  const { data: fc, isLoading, error } = useQuery({
-    queryKey: ['forecast', projectId, window],
-    queryFn: () => api.forecast(projectId, window),
-    enabled: !!projectId,
-  })
-
-  const overrideMut = useMutation({
-    mutationFn: ({ month_id, nr }: { month_id: string; nr: number }) =>
-      api.setOverride(projectId, month_id, { override_net_revenue: nr }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['forecast', projectId] }); setEditOverride(null) },
-  })
-
-  const deleteOverrideMut = useMutation({
-    mutationFn: (month_id: string) => api.deleteOverride(projectId, month_id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['forecast', projectId] }),
-  })
-
-  if (isLoading) return <div className="p-8 text-slate-500">Caricamento...</div>
-  if (error) return <div className="p-8 text-red-600">Errore: {(error as Error).message}</div>
-  if (!fc) return null
-
-  return (
-    <div className="p-6 space-y-6 max-w-7xl">
-      {/* ── Header ── */}
-      <div>
-        <Link to="/projects" className="text-sm text-blue-600 hover:underline">← Progetti</Link>
-        <div className="flex items-start justify-between mt-2">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-slate-800">{fc.project_id}</h1>
-              {fc.at_risk && (
-                <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-semibold animate-pulse">
-                  ⚠ RISCHIO ESAURIMENTO
-                </span>
-              )}
-              <StatusBadge status={fc.project_status} />
-            </div>
-            <p className="text-slate-500 mt-0.5">{fc.project_title}</p>
-            <p className="text-slate-400 text-sm mt-0.5">
-              {fc.client_name && <span className="font-medium text-slate-600">{fc.client_name}</span>}
-              {fc.client_group && <span> · {fc.client_group}</span>}
-              {fc.engagement_manager && <span> · EM: {fc.engagement_manager}</span>}
-              {' · '}FY{String(fc.fy).slice(2)}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* ── KPI Netto (primario) ── */}
-      <section>
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">
-          Net Revenue — metrica primaria
-        </h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard
-            label="NR Actual (YTD)"
-            value={fmtEur(fc.ts_net_revenue_total)}
-            sub={`Budget IOW: ${fmtEur(fc.iow_net_revenue)}`}
-            accent="blue"
-          />
-          <KpiCard
-            label="% Consumo NR"
-            value={fc.pct_consumo_nr != null ? `${fc.pct_consumo_nr}%` : '—'}
-            sub={`${fmtEur(fc.residuo_eur)} residui`}
-            accent={fc.pct_consumo_nr != null && fc.pct_consumo_nr > 90 ? 'red' : fc.pct_consumo_nr != null && fc.pct_consumo_nr > 70 ? 'amber' : 'blue'}
-          />
-          <KpiCard
-            label="Forecast FY NR"
-            value={fmtEur(fc.forecast_fy_net_revenue)}
-            sub={`YTD: ${fmtEur(fc.actual_ytd_net_revenue)} · Futuri: ${fc.future_months_detail.length} mesi`}
-            accent="green"
-          />
-          <KpiCard
-            label="Data esaurimento NR"
-            value={fc.data_esaurimento ?? '—'}
-            sub={fc.mesi_residui_nr != null ? `≈ ${fc.mesi_residui_nr} mesi al run rate` : 'Nessun dato storico'}
-            accent={fc.at_risk ? 'red' : 'default'}
-          />
-        </div>
-      </section>
-
-      {/* ── Barra consumo NR ── */}
-      {fc.iow_net_revenue && (
-        <div className="bg-white rounded-lg border border-slate-200 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-slate-600 font-medium">Consumo Net Revenue</span>
-            <span className="text-sm text-slate-500">
-              {fmtEur(fc.ts_net_revenue_total)} / {fmtEur(fc.iow_net_revenue)}
-            </span>
-          </div>
-          <PctBar value={fc.pct_consumo_nr} />
-          {fc.pct_consumo_ore != null && (
-            <div className="mt-2">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-slate-400">Consumo ore</span>
-                <span className="text-xs text-slate-400">
-                  {fmtN(fc.ts_hours_total)} / {fmtN(fc.iow_hours_total)} h
-                </span>
-              </div>
-              <PctBar value={fc.pct_consumo_ore} color="bg-slate-400" />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Grafico mensile NR + Ore ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-700 mb-4">Andamento mensile</h2>
-          {fc.monthly_actuals.length === 0 ? (
-            <p className="text-slate-400 text-sm">Nessun dato timesheet.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <ComposedChart data={fc.monthly_actuals} margin={{ left: 10, right: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis
-                  dataKey="month_id"
-                  tick={{ fontSize: 11 }}
-                  tickFormatter={(v: string) => v.slice(5)}
-                />
-                <YAxis
-                  yAxisId="nr"
-                  orientation="left"
-                  tick={{ fontSize: 10 }}
-                  tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`}
-                />
-                <YAxis
-                  yAxisId="h"
-                  orientation="right"
-                  tick={{ fontSize: 10 }}
-                  tickFormatter={(v: number) => `${v}h`}
-                />
-                <Tooltip
-                  formatter={(value: number, name: string) =>
-                    name === 'Net Revenue' ? [fmtEur(value), name] : [`${fmtN(value)} h`, name]
-                  }
-                  labelFormatter={(l: string) => {
-                    const m = fc.monthly_actuals.find(x => x.month_id === l)
-                    return `${l}${m?.is_partial ? ' (parziale)' : ''}`
-                  }}
-                />
-                <Legend />
-                <Bar yAxisId="nr" dataKey="net_revenue" name="Net Revenue" fill="#3b82f6" radius={[3, 3, 0, 0]} opacity={0.85} />
-                <Line yAxisId="h" dataKey="hours" name="Ore" stroke="#94a3b8" strokeWidth={2} dot={{ r: 3 }} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        {/* Run rate & Scenari */}
-        <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-slate-700">Run Rate</h2>
-            <select
-              value={window}
-              onChange={(e) => setWindow(e.target.value)}
-              className="text-xs border border-slate-200 rounded px-2 py-1 text-slate-600"
-            >
-              <option value="last_month">Ultimo mese</option>
-              <option value="last_3_months">Media 3 mesi</option>
-              <option value="weighted">Ponderato (3/2/1)</option>
-            </select>
-          </div>
-
-          {fc.run_rate.complete_months_available === 0 ? (
-            <p className="text-amber-600 text-sm">Nessun mese completo disponibile per il run rate.</p>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-blue-50 rounded-lg p-3 text-center">
-                  <p className="text-xs text-blue-500 uppercase tracking-wide">NR / mese</p>
-                  <p className="text-xl font-bold text-blue-700 mt-1">{fmtEur(fc.run_rate.net_revenue)}</p>
-                </div>
-                <div className="bg-slate-50 rounded-lg p-3 text-center">
-                  <p className="text-xs text-slate-400 uppercase tracking-wide">Ore / mese</p>
-                  <p className="text-xl font-bold text-slate-600 mt-1">{fmtN(fc.run_rate.hours)} h</p>
-                </div>
-              </div>
-              <p className="text-xs text-slate-400 text-center">
-                {fc.run_rate.months_used} mesi usati · {fc.run_rate.complete_months_available} mesi completi disponibili
-              </p>
-
-              <div>
-                <p className="text-xs text-slate-400 uppercase tracking-wide mb-2">Scenari NR mensile</p>
-                <div className="grid grid-cols-3 gap-1 text-center text-xs">
-                  {(['low', 'base', 'high'] as const).map((s) => (
-                    <div key={s} className={`rounded p-2 ${s === 'base' ? 'bg-blue-50 border border-blue-200' : 'bg-slate-50'}`}>
-                      <p className="text-slate-400 capitalize">{s === 'low' ? 'P25' : s === 'base' ? 'P50' : 'P75'}</p>
-                      <p className="font-semibold text-slate-700">{fmtEur(fc.scenari_nr[s], 0)}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* ── Risorse ── */}
-      <section>
-        <h2 className="text-base font-semibold text-slate-700 mb-3">
-          Risorse ({fc.resources.length}) — breakdown per Net Revenue
-        </h2>
-        <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
-                <th className="text-left px-4 py-3">Risorsa</th>
-                <th className="text-left px-4 py-3">Ruolo</th>
-                <th className="text-right px-4 py-3">Ore</th>
-                <th className="text-right px-4 py-3">Net Revenue</th>
-                <th className="text-right px-4 py-3">€/h (blended)</th>
-                <th className="text-right px-4 py-3">% NR</th>
-                <th className="px-4 py-3 w-32">Peso NR</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {fc.resources.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-6 text-center text-slate-400">Nessun dato risorsa.</td></tr>
-              )}
-              {fc.resources.map((r) => (
-                <tr key={r.resource_id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-slate-700">{r.resource_name}</p>
-                    <p className="text-xs text-slate-400">{r.resource_id}</p>
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">{r.job_title ?? '—'}</td>
-                  <td className="px-4 py-3 text-right text-slate-700">{fmtN(r.hours)}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-slate-800">{fmtEur(r.net_revenue)}</td>
-                  <td className="px-4 py-3 text-right text-slate-600">{fmtEur(r.blended_net_rate)}</td>
-                  <td className="px-4 py-3 text-right text-slate-600">{r.pct_nr != null ? `${r.pct_nr}%` : '—'}</td>
-                  <td className="px-4 py-3">
-                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-blue-400 rounded-full"
-                        style={{ width: `${r.pct_nr ?? 0}%` }}
-                      />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {fc.resources.length > 0 && (
-                <tr className="bg-slate-50 font-semibold">
-                  <td colSpan={2} className="px-4 py-2.5 text-slate-600 text-sm">Totale</td>
-                  <td className="px-4 py-2.5 text-right text-slate-700">{fmtN(fc.ts_hours_total)}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-800">{fmtEur(fc.ts_net_revenue_total)}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-600">
-                    {fc.ts_hours_total ? fmtEur(fc.ts_net_revenue_total / fc.ts_hours_total) : '—'}
-                  </td>
-                  <td colSpan={2} className="px-4 py-2.5" />
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* ── Forecast mesi futuri ── */}
-      {fc.future_months_detail.length > 0 && (
-        <section>
-          <h2 className="text-base font-semibold text-slate-700 mb-3">
-            Proiezione FY{String(fc.fy).slice(2)} — mesi futuri
-          </h2>
-          <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
-                  <th className="text-left px-4 py-3">Mese</th>
-                  <th className="text-right px-4 py-3">NR proiettato</th>
-                  <th className="text-left px-4 py-3">Fonte</th>
-                  <th className="px-4 py-3">Azione</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {fc.future_months_detail.map((m) => {
-                  const isEditing = editOverride?.month_id === m.month_id
-                  const hasOverride = m.is_override
-                  return (
-                    <tr key={m.month_id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-700">{m.month_id}</td>
-                      <td className="px-4 py-3 text-right">
-                        {isEditing ? (
-                          <input
-                            type="number"
-                            step="100"
-                            value={editOverride?.value ?? ''}
-                            onChange={(e) => setEditOverride({ month_id: m.month_id, value: e.target.value })}
-                            className="w-28 border border-blue-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            autoFocus
-                          />
-                        ) : (
-                          <span className={hasOverride ? 'font-semibold text-blue-700' : 'text-slate-700'}>
-                            {fmtEur(m.projected_nr)}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${hasOverride ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
-                          {hasOverride ? 'Override' : 'Run rate'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {isEditing ? (
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => overrideMut.mutate({ month_id: m.month_id, nr: parseFloat(editOverride?.value ?? '0') })}
-                              className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-                            >
-                              Salva
-                            </button>
-                            <button
-                              onClick={() => setEditOverride(null)}
-                              className="text-xs px-2 py-1 border border-slate-300 rounded hover:bg-slate-50"
-                            >
-                              Annulla
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => setEditOverride({ month_id: m.month_id, value: String(m.projected_nr ?? '') })}
-                              className="text-xs text-blue-600 hover:underline"
-                            >
-                              {hasOverride ? 'Modifica' : 'Override'}
-                            </button>
-                            {hasOverride && (
-                              <button
-                                onClick={() => deleteOverrideMut.mutate(m.month_id)}
-                                className="text-xs text-red-500 hover:underline"
-                              >
-                                Rimuovi
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-                <tr className="bg-slate-50 font-semibold border-t border-slate-200">
-                  <td className="px-4 py-2.5 text-slate-600 text-sm">Totale proiettato</td>
-                  <td className="px-4 py-2.5 text-right text-slate-800">
-                    {fmtEur(fc.future_months_detail.reduce((s, m) => s + (m.projected_nr ?? 0), 0))}
-                  </td>
-                  <td colSpan={2} />
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
-            <span className="font-semibold text-green-800">Forecast totale FY{String(fc.fy).slice(2)}: </span>
-            <span className="text-green-700 font-bold text-base">{fmtEur(fc.forecast_fy_net_revenue)}</span>
-            <span className="text-green-600 ml-3">
-              (YTD {fmtEur(fc.actual_ytd_net_revenue)} + proiettato {fmtEur(fc.future_months_detail.reduce((s, m) => s + (m.projected_nr ?? 0), 0))})
-            </span>
-          </div>
-        </section>
-      )}
-
-      {/* ── Dettaglio mensile ── */}
-      <section>
-        <h2 className="text-base font-semibold text-slate-700 mb-3">Storico mensile</h2>
-        <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
-                <th className="text-left px-4 py-3">Mese</th>
-                <th className="text-right px-4 py-3">Net Revenue</th>
-                <th className="text-right px-4 py-3">Ore</th>
-                <th className="text-right px-4 py-3">€/h medio</th>
-                <th className="text-left px-4 py-3">Note</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {fc.monthly_actuals.map((m) => (
-                <tr key={m.month_id} className={`hover:bg-slate-50 ${m.is_partial ? 'opacity-70' : ''}`}>
-                  <td className="px-4 py-2.5 text-slate-700 font-medium">{m.month_id}</td>
-                  <td className="px-4 py-2.5 text-right font-semibold text-slate-800">{fmtEur(m.net_revenue)}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-600">{fmtN(m.hours)} h</td>
-                  <td className="px-4 py-2.5 text-right text-slate-500">
-                    {m.hours > 0 ? fmtEur(m.net_revenue / m.hours) : '—'}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-slate-400">
-                    {m.is_partial ? '⚠ mese in corso (escluso dal run rate)' : ''}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  )
+function fmtWeekLabel(weekEnd: string | null, weekId: string) {
+  const ref = weekEnd ?? weekId
+  return new Date(ref).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function KpiCard({
-  label, value, sub, accent = 'default',
-}: {
-  label: string; value: string; sub?: string; accent?: 'blue' | 'green' | 'red' | 'amber' | 'default'
-}) {
-  const borders = { blue: 'border-l-blue-500', green: 'border-l-green-500', red: 'border-l-red-500', amber: 'border-l-amber-500', default: 'border-l-slate-300' }
-  return (
-    <div className={`bg-white rounded-lg border border-slate-200 border-l-4 ${borders[accent]} p-4 shadow-sm`}>
-      <p className="text-xs text-slate-500 uppercase tracking-wide">{label}</p>
-      <p className="text-xl font-bold text-slate-800 mt-1 leading-tight">{value}</p>
-      {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
-    </div>
-  )
-}
-
 function StatusBadge({ status }: { status: string | null }) {
   if (!status) return null
   const colors: Record<string, string> = {
-    'In Chiusura': 'bg-slate-100 text-slate-600',
+    'In Chiusura': 'bg-slate-100 text-slate-500',
     'Aperto': 'bg-green-100 text-green-700',
     'Active': 'bg-green-100 text-green-700',
     'On Hold': 'bg-amber-100 text-amber-700',
@@ -468,5 +44,425 @@ function StatusBadge({ status }: { status: string | null }) {
     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${colors[status] ?? 'bg-blue-100 text-blue-700'}`}>
       {status}
     </span>
+  )
+}
+
+function ProgressBar({ pct, color = 'blue' }: { pct: number | null; color?: string }) {
+  if (pct == null) return <span className="text-slate-400 text-xs">—</span>
+  const capped = Math.min(Math.max(pct, 0), 100)
+  const bg = pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-400' : color === 'slate' ? 'bg-slate-400' : 'bg-blue-500'
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+        <div className={`h-full ${bg} rounded-full transition-all`} style={{ width: `${capped}%` }} />
+      </div>
+      <span className="text-xs font-semibold w-12 text-right">{pct.toFixed(1)}%</span>
+    </div>
+  )
+}
+
+function KpiCard({
+  label, value, sub, accent, small,
+}: {
+  label: string
+  value: string | null
+  sub?: string
+  accent?: 'red' | 'green' | 'blue'
+  small?: boolean
+}) {
+  const valColor = accent === 'red' ? 'text-red-600' : accent === 'green' ? 'text-green-700' : 'text-slate-800'
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+      <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">{label}</p>
+      <p className={`${small ? 'text-xl' : 'text-2xl'} font-bold ${valColor} mt-1 truncate`}>{value ?? '—'}</p>
+      {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
+    </div>
+  )
+}
+
+// ── BU/CC Breakdown ────────────────────────────────────────────────────────────
+
+function BuBreakdownSection({ byBu, totalNr }: { byBu: BuBreakdown[]; totalNr: number }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(byBu.map(b => b.bu)))
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">
+        Breakdown BU / Centro di Costo
+      </h2>
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        {/* Intestazione */}
+        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-2 px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide font-medium">
+          <span>Struttura</span>
+          <span className="text-right">Ore</span>
+          <span className="text-right">NR caricato</span>
+          <span className="text-right">% sul tot.</span>
+          <span className="text-right">€/ora (blended)</span>
+        </div>
+
+        {byBu.map((bu, i) => {
+          const open = expanded.has(bu.bu)
+          const buPct = totalNr > 0 ? (bu.net_revenue / totalNr * 100) : 0
+          return (
+            <div key={bu.bu} className={i > 0 ? 'border-t border-slate-200' : ''}>
+              {/* Riga BU */}
+              <button
+                onClick={() => setExpanded(prev => {
+                  const s = new Set(prev)
+                  open ? s.delete(bu.bu) : s.add(bu.bu)
+                  return s
+                })}
+                className="w-full grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-2 px-4 py-3 hover:bg-slate-50 transition-colors text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 text-xs">{open ? '▾' : '▸'}</span>
+                  <div>
+                    <p className="font-semibold text-slate-800 text-sm">{bu.bu}</p>
+                    <div className="mt-1 w-32">
+                      <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(buPct, 100)}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <span className="text-right text-sm font-medium text-slate-700 self-center">{fmtN(bu.hours)} h</span>
+                <span className="text-right text-sm font-semibold text-slate-800 self-center">{fmtEur(bu.net_revenue)}</span>
+                <span className="text-right text-sm text-slate-600 self-center">{bu.pct_nr?.toFixed(1)}%</span>
+                <span className="text-right text-sm text-slate-500 self-center">{bu.blended_rate != null ? `€${fmtN(bu.blended_rate, 2)}/h` : '—'}</span>
+              </button>
+
+              {/* Righe CC (espandibili) */}
+              {open && bu.cost_centers.map(cc => (
+                <div
+                  key={cc.cc_code}
+                  className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-2 px-4 py-2.5 bg-slate-50/50 border-t border-slate-100"
+                >
+                  <div className="pl-6">
+                    <p className="text-sm text-slate-700">{cc.cc_name}</p>
+                    <p className="text-xs text-slate-400">{cc.cc_code}{cc.ou ? ` · ${cc.ou}` : ''}</p>
+                  </div>
+                  <span className="text-right text-sm text-slate-600">{fmtN(cc.hours)} h</span>
+                  <span className="text-right text-sm font-medium text-slate-700">{fmtEur(cc.net_revenue)}</span>
+                  <span className="text-right text-sm text-slate-500">{cc.pct_nr?.toFixed(1)}%</span>
+                  <span className="text-right text-sm text-slate-400">{cc.blended_rate != null ? `€${fmtN(cc.blended_rate, 2)}/h` : '—'}</span>
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+// ── Weekly Chart ───────────────────────────────────────────────────────────────
+
+function WeeklyChart({ weekly }: { weekly: WeeklyLoad[] }) {
+  const chrono = [...weekly].reverse()
+  const data = chrono.map(w => ({
+    label: fmtWeekLabel(w.week_end, w.week_id),
+    net_revenue: w.net_revenue,
+    has_activity: w.has_activity,
+  }))
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">
+        Trend NR settimanale
+      </h2>
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+        <ResponsiveContainer width="100%" height={180}>
+          <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+            <YAxis
+              tickFormatter={v => `€${(v / 1000).toFixed(0)}K`}
+              tick={{ fontSize: 11, fill: '#94a3b8' }}
+              width={52}
+            />
+            <Tooltip
+              formatter={(v: number) => [fmtEur(v), 'NR']}
+              contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+            />
+            <Bar dataKey="net_revenue" radius={[3, 3, 0, 0]}>
+              {data.map((d, i) => (
+                <Cell key={i} fill={d.has_activity ? '#3b82f6' : '#e2e8f0'} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+  )
+}
+
+// ── Forecast Card ──────────────────────────────────────────────────────────────
+
+function ForecastCard({ forecast }: { forecast: ReturnType<typeof Object.assign> }) {
+  const isLastWeekLow =
+    forecast.last_week_nr != null &&
+    forecast.avg_4w_nr != null &&
+    forecast.avg_4w_nr > 0 &&
+    forecast.last_week_nr / forecast.avg_4w_nr < 0.3
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">
+        Previsione saturazione
+      </h2>
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
+        {/* Residuo */}
+        <div className="flex items-baseline justify-between">
+          <span className="text-sm text-slate-500">Residuo NR da produrre</span>
+          <span className="text-2xl font-bold text-slate-800">{fmtEur(forecast.residuo_eur)}</span>
+        </div>
+
+        <div className="border-t border-slate-100" />
+
+        {/* Ultima settimana attiva */}
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+              Ultima settimana attiva
+            </span>
+            <span className="text-xs text-slate-400">
+              al {fmtDate(forecast.last_week_end ?? forecast.last_week_id)}
+            </span>
+            {isLastWeekLow && (
+              <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                attenzione: settimana leggera
+              </span>
+            )}
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-slate-500">{fmtN(forecast.last_week_hours)} h · {fmtEur(forecast.last_week_nr)} NR</span>
+            {forecast.saturation_date_lw ? (
+              <div className="text-right">
+                <span className={`font-semibold ${isLastWeekLow ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
+                  {fmtDate(forecast.saturation_date_lw)}
+                </span>
+                <span className="text-slate-400 text-xs ml-2">({fmtN(forecast.weeks_to_saturation_lw, 0)} sett.)</span>
+              </div>
+            ) : <span className="text-slate-400 text-xs">n/d</span>}
+          </div>
+        </div>
+
+        {/* Media 4 settimane */}
+        <div className={`rounded-lg p-3 ${isLastWeekLow ? 'bg-blue-50 border border-blue-200' : 'bg-slate-50'}`}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className={`text-xs font-semibold uppercase tracking-wide ${isLastWeekLow ? 'text-blue-700' : 'text-slate-600'}`}>
+              Media ultime 4 sett. attive
+            </span>
+            {isLastWeekLow && (
+              <span className="text-xs bg-blue-600 text-white px-1.5 py-0.5 rounded font-medium">
+                stima principale
+              </span>
+            )}
+          </div>
+          <div className="flex justify-between items-baseline">
+            <span className="text-sm text-slate-600">{fmtN(forecast.avg_4w_hours, 1)} h/sett · {fmtEur(forecast.avg_4w_nr)} NR/sett</span>
+            {forecast.saturation_date_4w ? (
+              <div className="text-right">
+                <span className="text-lg font-bold text-slate-800">{fmtDate(forecast.saturation_date_4w)}</span>
+                <p className="text-xs text-slate-400">{fmtN(forecast.weeks_to_saturation_4w, 1)} settimane</p>
+              </div>
+            ) : <span className="text-slate-400 text-xs">n/d</span>}
+          </div>
+        </div>
+
+        <p className="text-xs text-slate-400">
+          Stima lineare: residuo NR ÷ run rate settimanale. Non include lump sum o variazioni contrattuali future.
+        </p>
+      </div>
+    </section>
+  )
+}
+
+// ── Weekly Table ───────────────────────────────────────────────────────────────
+
+function WeeklyTable({ weekly }: { weekly: WeeklyLoad[] }) {
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">
+        Tutti i caricamenti settimanali
+      </h2>
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
+              <th className="text-left px-4 py-3">Settimana (al)</th>
+              <th className="text-right px-4 py-3">Ore</th>
+              <th className="text-right px-4 py-3">Lordo</th>
+              <th className="text-right px-4 py-3">Sconto</th>
+              <th className="text-right px-4 py-3 font-semibold text-slate-700">Netto</th>
+              <th className="text-right px-4 py-3">Risorse</th>
+              <th className="text-right px-4 py-3">CC</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {weekly.map(w => (
+              <tr
+                key={w.week_id}
+                className={`transition-colors ${w.has_activity ? 'hover:bg-slate-50' : 'opacity-40'}`}
+              >
+                <td className="px-4 py-3">
+                  <span className="font-medium text-slate-700">
+                    {fmtDate(w.week_end ?? w.week_id)}
+                  </span>
+                  <span className="text-xs text-slate-400 ml-2">{w.week_id}</span>
+                </td>
+                <td className="px-4 py-3 text-right text-slate-600">{w.has_activity ? `${fmtN(w.hours)} h` : '—'}</td>
+                <td className="px-4 py-3 text-right text-slate-500">{w.has_activity ? fmtEur(w.gross_revenue) : '—'}</td>
+                <td className="px-4 py-3 text-right text-slate-400 text-xs">
+                  {w.has_activity && w.discount !== 0 ? fmtEur(w.discount) : '—'}
+                </td>
+                <td className="px-4 py-3 text-right font-semibold text-slate-800">
+                  {w.has_activity ? fmtEur(w.net_revenue) : '—'}
+                </td>
+                <td className="px-4 py-3 text-right text-slate-500">{w.has_activity ? w.resources_active : '—'}</td>
+                <td className="px-4 py-3 text-right text-slate-500">{w.has_activity ? w.cc_count : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+          {/* Riga totali */}
+          <tfoot>
+            <tr className="bg-slate-50 border-t-2 border-slate-200 font-semibold text-sm">
+              <td className="px-4 py-3 text-slate-600">Totale</td>
+              <td className="px-4 py-3 text-right text-slate-700">
+                {fmtN(weekly.reduce((s, w) => s + w.hours, 0))} h
+              </td>
+              <td className="px-4 py-3 text-right text-slate-600">
+                {fmtEur(weekly.reduce((s, w) => s + w.gross_revenue, 0))}
+              </td>
+              <td className="px-4 py-3 text-right text-slate-500 text-xs">
+                {fmtEur(weekly.reduce((s, w) => s + w.discount, 0))}
+              </td>
+              <td className="px-4 py-3 text-right text-slate-800">
+                {fmtEur(weekly.reduce((s, w) => s + w.net_revenue, 0))}
+              </td>
+              <td colSpan={2} />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+  )
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────────────
+
+export default function ProjectDetail() {
+  const { id } = useParams<{ id: string }>()
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['project-detail', id],
+    queryFn: () => api.projectDetail(id!),
+  })
+
+  if (isLoading) return <div className="p-8 text-slate-500">Caricamento...</div>
+  if (error) return <div className="p-8 text-red-600">Errore: {(error as Error).message}</div>
+  if (!data) return null
+
+  const d = data
+  const lumpSumSpese = (d.iow_contract_value != null && d.iow_net_revenue != null)
+    ? d.iow_contract_value - d.iow_net_revenue
+    : null
+
+  return (
+    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+
+      {/* Header ─────────────────────────────────────────────────────────────── */}
+      <div>
+        <Link to="/projects" className="text-xs text-blue-600 hover:underline">← Tutti i progetti</Link>
+        <div className="flex items-start justify-between mt-2">
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-slate-800">{d.project_id}</h1>
+              <StatusBadge status={d.project_status} />
+              {d.fy_closing && (
+                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
+                  FY{String(d.fy_closing).slice(2)}
+                </span>
+              )}
+              {d.product_code && (
+                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
+                  {d.product_code}
+                </span>
+              )}
+            </div>
+            {d.project_title && (
+              <p className="text-slate-500 text-sm mt-1">{d.project_title}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-x-6 gap-y-1 mt-2 text-sm text-slate-500">
+          {d.client_name && <span><span className="text-slate-400">Cliente:</span> <span className="font-medium text-slate-700">{d.client_name}</span>{d.client_group && d.client_group !== d.client_name ? ` (${d.client_group})` : ''}</span>}
+          {d.engagement_manager && <span><span className="text-slate-400">Manager:</span> <span className="font-medium text-slate-700">{d.engagement_manager}</span></span>}
+          {d.engagement_partner && <span><span className="text-slate-400">Partner:</span> <span className="text-slate-700">{d.engagement_partner}</span></span>}
+          {d.legal_entity && <span className="text-slate-400">{d.legal_entity}</span>}
+        </div>
+      </div>
+
+      {/* KPI cards ───────────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <KpiCard
+          label="Valore contratto"
+          value={fmtEur(d.iow_contract_value)}
+          sub={lumpSumSpese != null ? `Lumpsum+spese: ${fmtEur(lumpSumSpese)}` : undefined}
+        />
+        <KpiCard
+          label="NR da produrre"
+          value={fmtEur(d.iow_net_revenue)}
+          sub={d.iow_hours_total != null ? `${fmtN(d.iow_hours_total)} ore budget` : undefined}
+          accent="blue"
+        />
+        <KpiCard
+          label="NR caricato"
+          value={fmtEur(d.ts_net_revenue_total)}
+          sub={`${fmtN(d.ts_hours_total)} ore · lordo ${fmtEur(d.ts_gross_revenue_total)}`}
+        />
+        <KpiCard
+          label="Residuo NR"
+          value={fmtEur(d.residuo_eur)}
+          sub={d.residuo_ore != null ? `${fmtN(d.residuo_ore)} ore residue` : undefined}
+          accent={(d.residuo_eur ?? 0) < 0 ? 'red' : 'green'}
+        />
+      </div>
+
+      {/* Progress bars ───────────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm px-5 py-4 space-y-3">
+        <div>
+          <div className="flex justify-between items-baseline mb-1">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">% NR consumato</span>
+            <span className="text-xs text-slate-400">
+              {fmtEur(d.ts_net_revenue_total)} / {fmtEur(d.iow_net_revenue)}
+            </span>
+          </div>
+          <ProgressBar pct={d.pct_consumo_nr} />
+        </div>
+        <div>
+          <div className="flex justify-between items-baseline mb-1">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">% Ore consumate</span>
+            <span className="text-xs text-slate-400">
+              {fmtN(d.ts_hours_total)} h / {fmtN(d.iow_hours_total)} h budget
+            </span>
+          </div>
+          <ProgressBar pct={d.pct_consumo_ore} color="slate" />
+        </div>
+      </div>
+
+      {/* Forecast + Chart ────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ForecastCard forecast={d.forecast} />
+        <WeeklyChart weekly={d.weekly} />
+      </div>
+
+      {/* BU / CC breakdown ───────────────────────────────────────────────────── */}
+      <BuBreakdownSection byBu={d.by_bu} totalNr={d.ts_net_revenue_total} />
+
+      {/* Caricamenti settimanali ─────────────────────────────────────────────── */}
+      <WeeklyTable weekly={d.weekly} />
+
+    </div>
   )
 }

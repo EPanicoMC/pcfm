@@ -141,6 +141,80 @@ export interface DashboardData {
   }[]
 }
 
+// ── ProjectDetail types ────────────────────────────────────────────────────────
+
+export interface WeeklyLoad {
+  week_id: string
+  week_end: string | null
+  hours: number
+  net_revenue: number
+  gross_revenue: number
+  discount: number
+  resources_active: number
+  cc_count: number
+  has_activity: boolean
+}
+
+export interface CostCenterBreakdown {
+  cc_code: string
+  cc_name: string
+  ou: string | null
+  hours: number
+  net_revenue: number
+  pct_nr: number | null
+  blended_rate: number | null
+}
+
+export interface BuBreakdown {
+  bu: string
+  hours: number
+  net_revenue: number
+  pct_nr: number | null
+  blended_rate: number | null
+  cost_centers: CostCenterBreakdown[]
+}
+
+export interface WeeklyForecast {
+  last_week_id: string | null
+  last_week_end: string | null
+  last_week_nr: number | null
+  last_week_hours: number | null
+  avg_4w_nr: number | null
+  avg_4w_hours: number | null
+  residuo_eur: number | null
+  weeks_to_saturation_lw: number | null
+  weeks_to_saturation_4w: number | null
+  saturation_date_lw: string | null
+  saturation_date_4w: string | null
+}
+
+export interface ProjectDetailView {
+  project_id: string
+  project_title: string | null
+  client_name: string | null
+  client_group: string | null
+  engagement_manager: string | null
+  engagement_partner: string | null
+  project_status: string | null
+  legal_entity: string | null
+  fy_closing: number | null
+  product_code: string | null
+  iow_contract_value: number | null
+  iow_net_revenue: number | null
+  iow_hours_total: number | null
+  ts_hours_total: number
+  ts_net_revenue_total: number
+  ts_gross_revenue_total: number
+  ts_discount_total: number
+  pct_consumo_nr: number | null
+  pct_consumo_ore: number | null
+  residuo_eur: number | null
+  residuo_ore: number | null
+  by_bu: BuBreakdown[]
+  weekly: WeeklyLoad[]
+  forecast: WeeklyForecast
+}
+
 export interface Assumption {
   key: string
   value_num: number | null
@@ -179,6 +253,9 @@ export const api = {
 
   project: (id: string) =>
     req<Project & { monthly_timesheet: MonthlyActual[] }>(`/projects/${encodeURIComponent(id)}`),
+
+  projectDetail: (id: string) =>
+    req<ProjectDetailView>(`/projects/${encodeURIComponent(id)}/detail`),
 
   forecast: (id: string, window?: string) =>
     req<ProjectForecast>(
