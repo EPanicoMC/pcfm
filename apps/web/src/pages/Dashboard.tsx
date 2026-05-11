@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useEffect } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -13,7 +13,10 @@ import {
   DashboardFyBreakdown,
   DashboardFyForecastClient,
   LastWeekResource,
+  LastWeekSummary,
   ResourceFte,
+  ResourceFteSummary,
+  ResourceAllocation,
 } from '../api/client'
 
 // ── Formattatori ─────────────────────────────────────────────────────────────
@@ -753,80 +756,515 @@ function ResourceRow({ r }: { r: ResourceFte }) {
   )
 }
 
+// ── Pannello form allocazioni target ─────────────────────────────────────────
+
+function AllocationFormPanel({
+  rows,
+  loading,
+  dirty,
+  saving,
+  onAdd,
+  onUpdate,
+  onRemove,
+  onSave,
+  fteData,
+}: {
+  rows: ResourceAllocation[]
+  loading: boolean
+  dirty: boolean
+  saving: boolean
+  onAdd: () => void
+  onUpdate: (i: number, field: keyof ResourceAllocation, value: unknown) => void
+  onRemove: (i: number) => void
+  onSave: () => void
+  fteData: ResourceFteSummary | undefined
+}) {
+  const [showFte, setShowFte] = useState(false)
+
+  const knownResources = useMemo(
+    () => (fteData ? [...new Set(fteData.resources.map((r) => r.resource_name))].sort() : []),
+    [fteData]
+  )
+
+  const knownClients = useMemo(() => {
+    const clients = new Set<string>()
+    rows.forEach((r) => r.client_name && clients.add(r.client_name))
+    return [...clients].sort()
+  }, [rows])
+
+  // Riepilogo % per risorsa (somma su tutti i clienti)
+  const totalByResource = useMemo(
+    () =>
+      rows.reduce<Record<string, number>>((acc, r) => {
+        if (r.resource_name) acc[r.resource_name] = (acc[r.resource_name] ?? 0) + r.fte_target_pct
+        return acc
+      }, {}),
+    [rows]
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">Allocazioni target</h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Indica la % di carico attesa per ogni risorsa gestita su ogni cliente · usato per il monitoraggio
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {dirty && (
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? 'Salvataggio...' : 'Salva'}
+            </button>
+          )}
+          <button
+            onClick={onAdd}
+            className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-600 hover:border-blue-300"
+          >
+            + Aggiungi
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="p-8 text-slate-400 text-center">Caricamento...</div>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-400 uppercase tracking-wide">
+                <th className="text-left px-4 py-3 font-medium">Risorsa</th>
+                <th className="text-left px-4 py-3 font-medium">Cliente</th>
+                <th className="text-center px-4 py-3 font-medium">% target</th>
+                <th className="text-left px-4 py-3 font-medium">Note</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                    Nessuna allocazione configurata · clicca "+ Aggiungi" per iniziare
+                  </td>
+                </tr>
+              )}
+              {rows.map((row, i) => (
+                <tr key={i} className="border-b border-slate-100 last:border-0">
+                  <td className="px-4 py-2">
+                    <input
+                      list={`res-list-${i}`}
+                      value={row.resource_name}
+                      onChange={(e) => onUpdate(i, 'resource_name', e.target.value)}
+                      placeholder="Nome risorsa..."
+                      className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-400"
+                    />
+                    <datalist id={`res-list-${i}`}>
+                      {knownResources.map((n) => <option key={n} value={n} />)}
+                    </datalist>
+                  </td>
+                  <td className="px-4 py-2">
+                    <input
+                      list={`cli-list-${i}`}
+                      value={row.client_name}
+                      onChange={(e) => onUpdate(i, 'client_name', e.target.value)}
+                      placeholder="Cliente..."
+                      className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-400"
+                    />
+                    <datalist id={`cli-list-${i}`}>
+                      {knownClients.map((n) => <option key={n} value={n} />)}
+                    </datalist>
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <div className="flex items-center gap-1 justify-center">
+                      <input
+                        type="number"
+                        min={0}
+                        max={200}
+                        step={5}
+                        value={row.fte_target_pct}
+                        onChange={(e) => onUpdate(i, 'fte_target_pct', parseFloat(e.target.value) || 0)}
+                        className="w-20 border border-slate-200 rounded px-2 py-1 text-sm text-center focus:outline-none focus:border-blue-400"
+                      />
+                      <span className="text-slate-400 text-xs">%</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2">
+                    <input
+                      value={row.note ?? ''}
+                      onChange={(e) => onUpdate(i, 'note', e.target.value || null)}
+                      placeholder="Opzionale..."
+                      className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-400"
+                    />
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <button
+                      onClick={() => onRemove(i)}
+                      className="text-slate-300 hover:text-red-500 text-lg leading-none"
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Riepilogo % totale per risorsa */}
+      {Object.keys(totalByResource).length > 0 && (
+        <div className="bg-slate-50 rounded-xl border border-slate-200 p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+            Totale % per risorsa
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(totalByResource)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([name, total]) => (
+                <span
+                  key={name}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                    total > 110
+                      ? 'bg-red-100 text-red-700'
+                      : total < 90
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-green-100 text-green-700'
+                  }`}
+                >
+                  {name} — {total}%
+                </span>
+              ))}
+          </div>
+          <p className="text-xs text-slate-400 mt-2">
+            Verde 90–110% · Arancio &lt;90% · Rosso &gt;110%
+          </p>
+        </div>
+      )}
+
+      {/* Controcheck FTE storico collassabile */}
+      {fteData && (
+        <div>
+          <button
+            onClick={() => setShowFte((v) => !v)}
+            className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-600"
+          >
+            <span>{showFte ? '▾' : '▸'}</span>
+            Distribuzione FTE storica da timesheet (solo controcheck)
+          </button>
+          {showFte && (
+            <div className="mt-3 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-400 uppercase tracking-wide">
+                    <th className="text-left px-4 py-3 font-medium">Risorsa</th>
+                    <th className="text-left px-4 py-3 font-medium">BU</th>
+                    <th className="text-right px-4 py-3 font-medium">Ore FY</th>
+                    <th className="text-right px-4 py-3 font-medium">Sett. att.</th>
+                    <th className="text-right px-4 py-3 font-medium">FTE</th>
+                    <th className="text-right px-4 py-3 font-medium">Gg/mese</th>
+                    <th className="px-4 py-3 font-medium">Distribuzione</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fteData.resources.map((r) => (
+                    <ResourceRow key={r.resource_id} r={r} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Pannello monitoraggio vs target ──────────────────────────────────────────
+
+function MonitoringPanel({
+  allocations,
+  lwData,
+}: {
+  allocations: ResourceAllocation[]
+  lwData: LastWeekSummary | undefined
+}) {
+  // Raggruppa allocazioni per resource_name
+  const targetByResource = useMemo(() => {
+    const map: Record<string, { client_name: string; fte_target_pct: number }[]> = {}
+    for (const a of allocations) {
+      if (a.resource_name) {
+        ;(map[a.resource_name] ??= []).push({ client_name: a.client_name, fte_target_pct: a.fte_target_pct })
+      }
+    }
+    return map
+  }, [allocations])
+
+  if (!lwData) return <div className="p-8 text-slate-400 text-center">Caricamento dati ultima settimana...</div>
+
+  const managedNames = new Set(Object.keys(targetByResource))
+  const managedResources = lwData.resources.filter((r) => managedNames.has(r.resource_name))
+  const unmanagedResources = lwData.resources.filter((r) => !managedNames.has(r.resource_name))
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+        <h2 className="text-sm font-semibold text-slate-700">
+          Monitoraggio — settimana {lwData.week_id ?? '—'}
+        </h2>
+        <p className="text-xs text-slate-400 mt-0.5">
+          Ore effettive vs target settimanale (% target × 40h)
+        </p>
+      </div>
+
+      {allocations.length === 0 && (
+        <div className="bg-slate-50 rounded-xl border border-slate-200 p-6 text-center">
+          <p className="text-slate-500 text-sm">Nessuna allocazione configurata.</p>
+          <p className="text-xs text-slate-400 mt-1">
+            Vai su "Allocazioni target" per aggiungere le risorse che gestisci.
+          </p>
+        </div>
+      )}
+
+      {/* Risorse gestite */}
+      {managedResources.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Risorse gestite</p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-slate-400 border-b border-slate-100">
+                <th className="text-left px-4 py-2 font-medium">Risorsa</th>
+                <th className="text-right px-4 py-2 font-medium">Ore eff.</th>
+                <th className="text-right px-4 py-2 font-medium">Target sett.</th>
+                <th className="text-right px-4 py-2 font-medium">Δ%</th>
+                <th className="px-4 py-2 font-medium">Allocazione</th>
+              </tr>
+            </thead>
+            <tbody>
+              {managedResources.map((r) => {
+                const targets = targetByResource[r.resource_name] ?? []
+                const totalPct = targets.reduce((s, t) => s + t.fte_target_pct, 0)
+                const expectedHours = (totalPct / 100) * 40
+                const delta = expectedHours > 0
+                  ? ((r.hours_last_week - expectedHours) / expectedHours) * 100
+                  : null
+                const isHigh = delta !== null && delta > 25
+                const isLow = delta !== null && delta < -25
+                return (
+                  <tr
+                    key={r.resource_id}
+                    className={`border-b border-slate-100 ${isHigh ? 'bg-amber-50' : isLow ? 'bg-red-50' : ''}`}
+                  >
+                    <td className="px-4 py-2.5">
+                      <span className="font-medium text-slate-800">{r.resource_name}</span>
+                      <span className="text-xs text-slate-400 ml-1.5">{r.bu}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium text-slate-700">
+                      {r.hours_last_week.toFixed(1)}h
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-slate-500">
+                      {expectedHours.toFixed(1)}h
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {delta !== null ? (
+                        <span
+                          className={`font-bold ${
+                            isHigh ? 'text-amber-600' : isLow ? 'text-red-600' : 'text-green-600'
+                          }`}
+                        >
+                          {delta > 0 ? '+' : ''}
+                          {delta.toFixed(0)}%
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex flex-wrap gap-1">
+                        {targets.map((t) => (
+                          <span
+                            key={t.client_name}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs"
+                          >
+                            {t.client_name} {t.fte_target_pct}%
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {allocations.length > 0 && managedResources.length === 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 p-6 text-center text-slate-400 text-sm">
+          Nessuna delle risorse gestite ha caricato nell'ultima settimana.
+        </div>
+      )}
+
+      {/* Risorse non gestite */}
+      {unmanagedResources.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Altre risorse (deviazione su media 4w)
+            </p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-slate-400 border-b border-slate-100">
+                <th className="text-left px-4 py-2 font-medium">Risorsa</th>
+                <th className="text-right px-4 py-2 font-medium">Ore eff.</th>
+                <th className="text-right px-4 py-2 font-medium">Media 4w</th>
+                <th className="text-right px-4 py-2 font-medium">Δ%</th>
+                <th className="px-4 py-2 font-medium">Progetti</th>
+              </tr>
+            </thead>
+            <tbody>
+              {unmanagedResources.map((r) => (
+                <tr key={r.resource_id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-4 py-2">
+                    <span className="text-slate-700">{r.resource_name}</span>
+                    <span className="text-xs text-slate-400 ml-1.5">{r.bu}</span>
+                  </td>
+                  <td className="px-4 py-2 text-right text-slate-600">{r.hours_last_week.toFixed(1)}h</td>
+                  <td className="px-4 py-2 text-right text-slate-400">
+                    {r.avg_4w_hours?.toFixed(1) ?? '—'}h
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    {r.deviation_pct !== null ? (
+                      <span
+                        className={`text-xs font-medium ${
+                          r.flag === 'high'
+                            ? 'text-amber-600'
+                            : r.flag === 'low'
+                            ? 'text-red-600'
+                            : 'text-slate-500'
+                        }`}
+                      >
+                        {r.deviation_pct > 0 ? '+' : ''}
+                        {r.deviation_pct}%
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400">nuovo</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-xs text-slate-400">
+                    {r.projects.slice(0, 2).map((p) => p.project_id.slice(-8)).join(' · ')}
+                    {r.projects.length > 2 && ` +${r.projects.length - 2}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Tab principale Risorse ────────────────────────────────────────────────────
+
 function ResourceFteTab() {
-  const { data, isLoading, error } = useQuery({
+  const [subTab, setSubTab] = useState<'allocazioni' | 'monitoraggio'>('allocazioni')
+  const queryClient = useQueryClient()
+
+  const { data: allocData, isLoading: allocLoading } = useQuery({
+    queryKey: ['allocations'],
+    queryFn: () => api.allocations(),
+  })
+
+  const { data: lwData } = useQuery({
+    queryKey: ['last-week'],
+    queryFn: () => api.lastWeek(),
+  })
+
+  const { data: fteData } = useQuery({
     queryKey: ['dashboard-resources'],
     queryFn: () => api.resources(),
   })
 
-  if (isLoading) return <div className="p-8 text-slate-500">Calcolo FTE...</div>
-  if (error) return <div className="p-8 text-red-600">Errore: {(error as Error).message}</div>
-  if (!data) return null
+  const [rows, setRows] = useState<ResourceAllocation[]>([])
+  const [dirty, setDirty] = useState(false)
+
+  useEffect(() => {
+    if (allocData) setRows(allocData)
+  }, [allocData])
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      api.saveAllocations(
+        rows.map((r) => ({
+          resource_name: r.resource_name,
+          client_name: r.client_name,
+          fte_target_pct: r.fte_target_pct,
+          note: r.note,
+        }))
+      ),
+    onSuccess: (newData) => {
+      queryClient.setQueryData(['allocations'], newData)
+      setDirty(false)
+    },
+  })
+
+  const addRow = () => {
+    setRows((prev) => [...prev, { resource_name: '', client_name: '', fte_target_pct: 100, note: null }])
+    setDirty(true)
+  }
+
+  const updateRow = (i: number, field: keyof ResourceAllocation, value: unknown) => {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)))
+    setDirty(true)
+  }
+
+  const removeRow = (i: number) => {
+    setRows((prev) => prev.filter((_, idx) => idx !== i))
+    setDirty(true)
+  }
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-700">
-            Risorse / FTE — FY{String(data.fy).slice(2)}
-          </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            FTE = media ore settimanali ÷ 40h · Gg/mese = FTE × 20 giorni lavorativi
-          </p>
-        </div>
-        <div className="flex gap-4">
-          <div className="text-center">
-            <p className="text-xs text-slate-400">Risorse</p>
-            <p className="text-xl font-bold text-slate-800">{data.total_resources}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-slate-400">Ore totali FY</p>
-            <p className="text-xl font-bold text-slate-800">{fmtN(data.total_hours, 0)}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-slate-400">FTE medio</p>
-            <p className="text-xl font-bold text-slate-800">
-              {data.resources.length > 0
-                ? (data.resources.reduce((s, r) => s + r.fte, 0) / data.resources.length).toFixed(2)
-                : '—'}
-            </p>
-          </div>
-        </div>
+      <div className="flex gap-2">
+        {(['allocazioni', 'monitoraggio'] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setSubTab(t)}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              subTab === t
+                ? 'bg-blue-600 text-white'
+                : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-300'
+            }`}
+          >
+            {t === 'allocazioni' ? 'Allocazioni target' : 'Monitoraggio'}
+          </button>
+        ))}
       </div>
 
-      {/* Tabella risorse */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-400 uppercase tracking-wide">
-              <th className="text-left px-4 py-3 font-medium">Risorsa</th>
-              <th className="text-left px-4 py-3 font-medium">BU</th>
-              <th className="text-right px-4 py-3 font-medium">Ore FY</th>
-              <th className="text-right px-4 py-3 font-medium">Sett. att.</th>
-              <th className="text-right px-4 py-3 font-medium">FTE</th>
-              <th className="text-right px-4 py-3 font-medium">Gg/mese</th>
-              <th className="px-4 py-3 font-medium">Distribuzione</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.resources.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
-                  Nessun dato per FY{String(data.fy).slice(2)}.
-                </td>
-              </tr>
-            )}
-            {data.resources.map((r) => (
-              <ResourceRow key={r.resource_id} r={r} />
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {subTab === 'allocazioni' && (
+        <AllocationFormPanel
+          rows={rows}
+          loading={allocLoading}
+          dirty={dirty}
+          saving={saveMut.isPending}
+          onAdd={addRow}
+          onUpdate={updateRow}
+          onRemove={removeRow}
+          onSave={() => saveMut.mutate()}
+          fteData={fteData}
+        />
+      )}
 
-      <p className="text-xs text-slate-400 text-center">
-        FTE calcolato su settimane con almeno un caricamento nel FY · Espandi una risorsa per vedere il dettaglio per codice progetto
-      </p>
+      {subTab === 'monitoraggio' && (
+        <MonitoringPanel allocations={rows} lwData={lwData} />
+      )}
     </div>
   )
 }

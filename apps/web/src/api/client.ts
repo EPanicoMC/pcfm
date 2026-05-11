@@ -420,6 +420,17 @@ export interface LastWeekSummary {
   resources: LastWeekResource[]
 }
 
+// ── Resource Allocations ──────────────────────────────────────────────────────
+
+export interface ResourceAllocation {
+  id?: number
+  resource_name: string
+  client_name: string
+  fte_target_pct: number
+  note: string | null
+  updated_at?: string
+}
+
 // ── API functions ──────────────────────────────────────────────────────────────
 
 export const api = {
@@ -488,4 +499,13 @@ export const api = {
 
   resources: (fy?: number) =>
     req<ResourceFteSummary>(`/dashboard/resources${fy ? `?fy=${fy}` : ''}`),
+
+  allocations: () => req<ResourceAllocation[]>('/allocations'),
+
+  saveAllocations: (items: Omit<ResourceAllocation, 'id' | 'updated_at'>[]) =>
+    req<ResourceAllocation[]>('/allocations', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(items),
+    }),
 }

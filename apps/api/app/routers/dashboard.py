@@ -468,19 +468,16 @@ def fy_forecast(
                 "client_group": cg,
                 "ts_nr_ytd": 0.0,
                 "ts_hours_ytd": 0.0,
-                "run_rate_weekly_nr": 0.0,
-                "run_rate_weekly_hours": 0.0,
                 "available_budget_nr": 0.0,
                 "available_budget_hours": 0.0,   # solo da progetti con dati IOW ore
                 "_has_hours_data": False,
                 "_bu_weighted": {},
-                "_weekly": {},  # week_id → {nr, hours} per storico FY corrente
+                "_weekly": {},       # week_id → {nr, hours} storico tutti i codici
+                "_weekly_open": {},  # week_id → {nr, hours} solo codici aperti (per run rate)
             }
         c = by_client[cn]
         c["ts_nr_ytd"] += ts_fy["nr"]
         c["ts_hours_ytd"] += ts_fy["hours"]
-        c["run_rate_weekly_nr"] += rr_nr
-        c["run_rate_weekly_hours"] += rr_hours
         c["available_budget_nr"] += residuo_nr
         if residuo_ore is not None:
             c["available_budget_hours"] += residuo_ore
@@ -491,11 +488,16 @@ def fy_forecast(
             c["_bu_weighted"].setdefault(bu, 0.0)
             c["_bu_weighted"][bu] += rr_nr * pct
 
-        # Storico settimanale per cliente (inclusi codici chiusi — storico reale)
+        # Storico settimanale: _weekly include tutti i codici (reale storico)
+        # _weekly_open solo codici aperti (base per il run rate di proiezione)
         for wid, w_nr, w_hours in weekly:
             c["_weekly"].setdefault(wid, {"nr": 0.0, "hours": 0.0})
             c["_weekly"][wid]["nr"] += w_nr
             c["_weekly"][wid]["hours"] += w_hours
+            if not is_closed:
+                c["_weekly_open"].setdefault(wid, {"nr": 0.0, "hours": 0.0})
+                c["_weekly_open"][wid]["nr"] += w_nr
+                c["_weekly_open"][wid]["hours"] += w_hours
 
     # ── Calcola previsione e semaforo per ogni cliente ─────────────────────────
     clients_result = []
@@ -506,8 +508,10 @@ def fy_forecast(
     INF = float("inf")
 
     for cn, c in by_client.items():
-        rr_nr = c["run_rate_weekly_nr"]
-        rr_hours = c["run_rate_weekly_hours"]
+        # Run rate calcolato dal settimanale aggregato cliente (codici aperti, ultime 4 settimane)
+        open_weekly_sorted = sorted(c["_weekly_open"].items(), key=lambda x: x[0], reverse=True)[:4]
+        rr_nr = sum(d["nr"] for _, d in open_weekly_sorted) / len(open_weekly_sorted) if open_weekly_sorted else 0.0
+        rr_hours = sum(d["hours"] for _, d in open_weekly_sorted) / len(open_weekly_sorted) if open_weekly_sorted else 0.0
         available_nr = c["available_budget_nr"]
         available_hours = c["available_budget_hours"]
         has_hours = c["_has_hours_data"]

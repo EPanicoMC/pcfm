@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from .routers import assumptions, dashboard, forecast, imports, projects
+from .routers import allocations, assumptions, dashboard, forecast, imports, projects
 
 app = FastAPI(title="PCFM API", version="0.1.0")
 
@@ -20,6 +20,7 @@ app.include_router(projects.router)
 app.include_router(forecast.router)
 app.include_router(dashboard.router)
 app.include_router(assumptions.router)
+app.include_router(allocations.router)
 
 
 @app.get("/api/health")
