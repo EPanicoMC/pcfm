@@ -1,7 +1,8 @@
 """Vista di dettaglio per un singolo codice progetto.
 
-Espone: KPI finanziari, breakdown BU>CC, caricamenti settimanali, previsione
-saturazione basata sull'ultima settimana con dati reali (NR > 0).
+NR effettivo: usa fact_project.net_revenue_act (da File 9, autoritative).
+TS importati: breakdown BU/CC/settimana dai timesheet File 8 caricati.
+Residuo = iow_net_revenue - net_revenue_act.
 """
 
 from __future__ import annotations
@@ -26,67 +27,100 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
         .all()
     )
 
-    # ── Aggregazione settimanale ───────────────────────────────────────────────
+    # ── Valori contrattuali (da File 9) ───────────────────────────────────────
+    iow_contract = float(p.iow_contract_value) if p.iow_contract_value else None
+    iow_nr = float(p.iow_net_revenue) if p.iow_net_revenue else None
+    iow_hours = float(p.iow_hours_total) if p.iow_hours_total else None
+
+    # NR effettivo autoritative — da File 9, copre tutti i mesi del progetto
+    project_nr_actual = float(p.net_revenue_act) if p.net_revenue_act else None
+    project_hours_actual = float(p.hours_actual) if p.hours_actual else None
+
+    # ── Aggregazione da timesheet importati ───────────────────────────────────
+    # weekly: per settimana (con resource set per contare risorse uniche)
+    # cc_agg: per CC (per breakdown BU>CC)
+    # fy_map: per FY (per breakdown temporale)
+    # week_cc: per settimana×CC (entries flat per filtro drill-down)
+
     weekly: dict[str, dict] = {}
     cc_agg: dict[str, dict] = {}
+    fy_map: dict[int, dict] = {}
+    week_cc: dict[tuple, dict] = {}
 
     for ts in ts_rows:
         wid = ts.week_id
         if not wid:
             continue
 
+        cc_code = ts.resource_cost_center or "__ND__"
+        dim_w = db.get(DimWeek, wid)
+        dim_cc = db.get(DimCostCenter, cc_code) if cc_code != "__ND__" else None
+
+        week_end = dim_w.week_end.isoformat() if (dim_w and dim_w.week_end) else None
+        fy = dim_w.fy if dim_w else (ts.fy or 0)
+        cc_display = cc_code if cc_code != "__ND__" else "N/D"
+        cc_name = (dim_cc.cc_name if dim_cc else None) or cc_display
+        bu = (dim_cc.bu if dim_cc else None) or "N/D"
+
+        h = ts.hours_actual or 0.0
+        nr = ts.net_revenue_actual or 0.0
+        gr = ts.gross_revenue or 0.0
+        disc = ts.discount or 0.0
+
         # Settimane
         if wid not in weekly:
-            dim_w = db.get(DimWeek, wid)
-            weekly[wid] = {
-                "week_id": wid,
-                "week_end": dim_w.week_end.isoformat() if (dim_w and dim_w.week_end) else None,
-                "hours": 0.0,
-                "net_revenue": 0.0,
-                "gross_revenue": 0.0,
-                "discount": 0.0,
-                "resources": set(),
-                "cc_set": set(),
-            }
-        weekly[wid]["hours"] += ts.hours_actual or 0.0
-        weekly[wid]["net_revenue"] += ts.net_revenue_actual or 0.0
-        weekly[wid]["gross_revenue"] += ts.gross_revenue or 0.0
-        weekly[wid]["discount"] += ts.discount or 0.0
+            weekly[wid] = {"week_id": wid, "week_end": week_end, "fy": fy,
+                           "hours": 0.0, "net_revenue": 0.0, "gross_revenue": 0.0,
+                           "discount": 0.0, "resources": set()}
+        weekly[wid]["hours"] += h
+        weekly[wid]["net_revenue"] += nr
+        weekly[wid]["gross_revenue"] += gr
+        weekly[wid]["discount"] += disc
         weekly[wid]["resources"].add(ts.resource_id)
-        if ts.resource_cost_center:
-            weekly[wid]["cc_set"].add(ts.resource_cost_center)
 
-        # Breakdown CC
-        cc_code = ts.resource_cost_center or "__ND__"
+        # CC
         if cc_code not in cc_agg:
-            dim_cc = db.get(DimCostCenter, cc_code) if cc_code != "__ND__" else None
-            cc_agg[cc_code] = {
-                "cc_code": cc_code if cc_code != "__ND__" else "N/D",
-                "cc_name": (dim_cc.cc_name if dim_cc else None) or cc_code,
-                "bu": (dim_cc.bu if dim_cc else None) or "N/D",
-                "ou": (dim_cc.ou if dim_cc else None),
-                "hours": 0.0,
-                "net_revenue": 0.0,
-            }
-        cc_agg[cc_code]["hours"] += ts.hours_actual or 0.0
-        cc_agg[cc_code]["net_revenue"] += ts.net_revenue_actual or 0.0
+            cc_agg[cc_code] = {"cc_code": cc_display, "cc_name": cc_name,
+                                "bu": bu, "ou": (dim_cc.ou if dim_cc else None),
+                                "hours": 0.0, "net_revenue": 0.0}
+        cc_agg[cc_code]["hours"] += h
+        cc_agg[cc_code]["net_revenue"] += nr
 
-    # ── Totali ─────────────────────────────────────────────────────────────────
-    ts_hours_total = sum(w["hours"] for w in weekly.values())
+        # FY
+        if fy not in fy_map:
+            fy_map[fy] = {"fy": fy, "hours": 0.0, "net_revenue": 0.0, "weeks": set()}
+        fy_map[fy]["hours"] += h
+        fy_map[fy]["net_revenue"] += nr
+        fy_map[fy]["weeks"].add(wid)
+
+        # Entries flat (settimana × CC)
+        key = (wid, cc_code)
+        if key not in week_cc:
+            week_cc[key] = {"week_id": wid, "week_end": week_end, "fy": fy,
+                            "cc_code": cc_display, "cc_name": cc_name, "bu": bu,
+                            "hours": 0.0, "net_revenue": 0.0,
+                            "gross_revenue": 0.0, "discount": 0.0}
+        week_cc[key]["hours"] += h
+        week_cc[key]["net_revenue"] += nr
+        week_cc[key]["gross_revenue"] += gr
+        week_cc[key]["discount"] += disc
+
+    # ── Totali timesheet importati ─────────────────────────────────────────────
     ts_nr_total = sum(w["net_revenue"] for w in weekly.values())
+    ts_hours_total = sum(w["hours"] for w in weekly.values())
     ts_gross_total = sum(w["gross_revenue"] for w in weekly.values())
     ts_discount_total = sum(w["discount"] for w in weekly.values())
 
-    iow_contract = float(p.iow_contract_value) if p.iow_contract_value else None
-    iow_nr = float(p.iow_net_revenue) if p.iow_net_revenue else None
-    iow_hours = float(p.iow_hours_total) if p.iow_hours_total else None
+    # ── KPI basati su valori autoritativi (File 9) ────────────────────────────
+    nr_for_kpi = project_nr_actual if project_nr_actual is not None else ts_nr_total
+    h_for_kpi = project_hours_actual if project_hours_actual is not None else ts_hours_total
 
-    pct_consumo_nr = round(ts_nr_total / iow_nr * 100, 1) if iow_nr else None
-    pct_consumo_ore = round(ts_hours_total / iow_hours * 100, 1) if iow_hours else None
-    residuo_eur = round(iow_nr - ts_nr_total, 2) if iow_nr is not None else None
-    residuo_ore = round(iow_hours - ts_hours_total, 1) if iow_hours is not None else None
+    pct_consumo_nr = round(nr_for_kpi / iow_nr * 100, 1) if iow_nr else None
+    pct_consumo_ore = round(h_for_kpi / iow_hours * 100, 1) if iow_hours else None
+    residuo_eur = round(iow_nr - nr_for_kpi, 2) if iow_nr is not None else None
+    residuo_ore = round(iow_hours - h_for_kpi, 1) if iow_hours is not None else None
 
-    # ── BU > CC breakdown ──────────────────────────────────────────────────────
+    # ── BU > CC breakdown (da TS importati) ───────────────────────────────────
     bu_map: dict[str, dict] = {}
     for cc_data in cc_agg.values():
         bu = cc_data["bu"]
@@ -106,47 +140,47 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
         })
 
     by_bu = sorted(
-        [
-            {
-                "bu": v["bu"],
-                "hours": round(v["hours"], 1),
-                "net_revenue": round(v["net_revenue"], 2),
-                "pct_nr": round(v["net_revenue"] / ts_nr_total * 100, 1) if ts_nr_total else None,
-                "blended_rate": round(v["net_revenue"] / v["hours"], 2) if v["hours"] else None,
-                "cost_centers": sorted(
-                    v["cost_centers"], key=lambda x: x["net_revenue"], reverse=True
-                ),
-            }
-            for v in bu_map.values()
-        ],
-        key=lambda x: x["net_revenue"],
-        reverse=True,
+        [{"bu": v["bu"], "hours": round(v["hours"], 1), "net_revenue": round(v["net_revenue"], 2),
+          "pct_nr": round(v["net_revenue"] / ts_nr_total * 100, 1) if ts_nr_total else None,
+          "blended_rate": round(v["net_revenue"] / v["hours"], 2) if v["hours"] else None,
+          "cost_centers": sorted(v["cost_centers"], key=lambda x: x["net_revenue"], reverse=True)}
+         for v in bu_map.values()],
+        key=lambda x: x["net_revenue"], reverse=True,
     )
 
-    # ── Lista settimanale (cronologica inversa) ────────────────────────────────
+    # ── FY breakdown (da TS importati) ────────────────────────────────────────
+    by_fy = sorted(
+        [{"fy": v["fy"], "weeks": len(v["weeks"]), "hours": round(v["hours"], 1),
+          "net_revenue": round(v["net_revenue"], 2),
+          "pct_of_ts": round(v["net_revenue"] / ts_nr_total * 100, 1) if ts_nr_total else None}
+         for v in fy_map.values()],
+        key=lambda x: x["fy"],
+    )
+
+    # ── Lista settimanale (per vista default non filtrata) ─────────────────────
     weekly_list = sorted(
-        [
-            {
-                "week_id": w["week_id"],
-                "week_end": w["week_end"],
-                "hours": round(w["hours"], 1),
-                "net_revenue": round(w["net_revenue"], 2),
-                "gross_revenue": round(w["gross_revenue"], 2),
-                "discount": round(w["discount"], 2),
-                "resources_active": len(w["resources"]),
-                "cc_count": len(w["cc_set"]),
-                "has_activity": w["hours"] > 0 or abs(w["net_revenue"]) > 0.01,
-            }
-            for w in weekly.values()
-        ],
-        key=lambda x: x["week_id"],
-        reverse=True,
+        [{"week_id": w["week_id"], "week_end": w["week_end"], "fy": w["fy"],
+          "hours": round(w["hours"], 1), "net_revenue": round(w["net_revenue"], 2),
+          "gross_revenue": round(w["gross_revenue"], 2), "discount": round(w["discount"], 2),
+          "resources_active": len(w["resources"]),
+          "has_activity": w["hours"] > 0 or abs(w["net_revenue"]) > 0.01}
+         for w in weekly.values()],
+        key=lambda x: x["week_id"], reverse=True,
     )
 
-    # ── Forecast basato su settimane non-zero ─────────────────────────────────
-    active_weeks = [w for w in sorted(weekly.keys(), reverse=True) if
-                    weekly[w]["hours"] > 0 or abs(weekly[w]["net_revenue"]) > 0.01]
-    forecast = _calc_weekly_forecast(active_weeks, weekly, residuo_eur)
+    # ── Entries flat (settimana × CC, per filtro drill-down) ──────────────────
+    entries = sorted(
+        [{"week_id": v["week_id"], "week_end": v["week_end"], "fy": v["fy"],
+          "cc_code": v["cc_code"], "cc_name": v["cc_name"], "bu": v["bu"],
+          "hours": round(v["hours"], 1), "net_revenue": round(v["net_revenue"], 2),
+          "gross_revenue": round(v["gross_revenue"], 2), "discount": round(v["discount"], 2)}
+         for v in week_cc.values()],
+        key=lambda x: x["week_id"], reverse=True,
+    )
+
+    # ── Forecast basato su settimane attive (TS importati) ────────────────────
+    active_wids = [w["week_id"] for w in weekly_list if w["has_activity"]]
+    forecast = _calc_weekly_forecast(active_wids, weekly, residuo_eur)
 
     client = p.client
     return {
@@ -160,24 +194,30 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
         "legal_entity": p.legal_entity,
         "fy_closing": p.fy_closing,
         "product_code": p.product_code,
-        # Contrattuali (da File 9)
+        # Contrattuali (File 9)
         "iow_contract_value": iow_contract,
         "iow_net_revenue": iow_nr,
         "iow_hours_total": iow_hours,
-        # Consuntivo TS
-        "ts_hours_total": round(ts_hours_total, 1),
-        "ts_net_revenue_total": round(ts_nr_total, 2),
-        "ts_gross_revenue_total": round(ts_gross_total, 2),
-        "ts_discount_total": round(ts_discount_total, 2),
+        # NR/ore autoritativi da File 9
+        "project_nr_actual": project_nr_actual,
+        "project_hours_actual": project_hours_actual,
+        # KPI calcolati su valori autoritativi
         "pct_consumo_nr": pct_consumo_nr,
         "pct_consumo_ore": pct_consumo_ore,
         "residuo_eur": residuo_eur,
         "residuo_ore": residuo_ore,
+        # Totali timesheet importati (subset)
+        "ts_nr_total": round(ts_nr_total, 2),
+        "ts_hours_total": round(ts_hours_total, 1),
+        "ts_gross_total": round(ts_gross_total, 2),
+        "ts_discount_total": round(ts_discount_total, 2),
         # Breakdown
         "by_bu": by_bu,
-        # Caricamenti settimanali (più recente prima)
+        "by_fy": by_fy,
+        # Dati settimanali
         "weekly": weekly_list,
-        # Previsione saturazione
+        "entries": entries,
+        # Forecast
         "forecast": forecast,
     }
 
@@ -187,7 +227,7 @@ def _calc_weekly_forecast(
     weekly: dict[str, dict],
     residuo_eur: float | None,
 ) -> dict[str, Any]:
-    empty = {
+    empty: dict[str, Any] = {
         "last_week_id": None, "last_week_end": None,
         "last_week_nr": None, "last_week_hours": None,
         "avg_4w_nr": None, "avg_4w_hours": None,
@@ -207,7 +247,6 @@ def _calc_weekly_forecast(
     avg_4w_nr = sum(weekly[w]["net_revenue"] for w in last_4) / len(last_4)
     avg_4w_hours = sum(weekly[w]["hours"] for w in last_4) / len(last_4)
 
-    # Data di saturazione: partiamo da week_end dell'ultima settimana attiva
     base_date = date.fromisoformat(last_end) if last_end else date.fromisoformat(last_id)
 
     sat_lw = sat_4w = weeks_lw = weeks_4w = None

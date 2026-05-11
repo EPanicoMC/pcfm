@@ -146,13 +146,26 @@ export interface DashboardData {
 export interface WeeklyLoad {
   week_id: string
   week_end: string | null
+  fy: number
   hours: number
   net_revenue: number
   gross_revenue: number
   discount: number
   resources_active: number
-  cc_count: number
   has_activity: boolean
+}
+
+export interface DetailEntry {
+  week_id: string
+  week_end: string | null
+  fy: number
+  cc_code: string
+  cc_name: string
+  bu: string
+  hours: number
+  net_revenue: number
+  gross_revenue: number
+  discount: number
 }
 
 export interface CostCenterBreakdown {
@@ -172,6 +185,14 @@ export interface BuBreakdown {
   pct_nr: number | null
   blended_rate: number | null
   cost_centers: CostCenterBreakdown[]
+}
+
+export interface FyBreakdown {
+  fy: number
+  weeks: number
+  hours: number
+  net_revenue: number
+  pct_of_ts: number | null
 }
 
 export interface WeeklyForecast {
@@ -202,16 +223,20 @@ export interface ProjectDetailView {
   iow_contract_value: number | null
   iow_net_revenue: number | null
   iow_hours_total: number | null
-  ts_hours_total: number
-  ts_net_revenue_total: number
-  ts_gross_revenue_total: number
-  ts_discount_total: number
+  project_nr_actual: number | null
+  project_hours_actual: number | null
   pct_consumo_nr: number | null
   pct_consumo_ore: number | null
   residuo_eur: number | null
   residuo_ore: number | null
+  ts_nr_total: number
+  ts_hours_total: number
+  ts_gross_total: number
+  ts_discount_total: number
   by_bu: BuBreakdown[]
+  by_fy: FyBreakdown[]
   weekly: WeeklyLoad[]
+  entries: DetailEntry[]
   forecast: WeeklyForecast
 }
 
