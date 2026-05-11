@@ -111,11 +111,46 @@ export interface ProjectForecast {
   resources: ResourceBreakdown[]
 }
 
+export interface DashboardFyBreakdown {
+  fy: number
+  project_count: number
+  open_count: number
+  closed_count: number
+  iow_net_revenue: number
+  ts_net_revenue: number
+  ts_hours: number
+}
+
+export interface DashboardBuBreakdown {
+  bu: string
+  ts_hours: number
+  ts_net_revenue: number
+  pct_of_total: number
+}
+
+export interface DashboardClient {
+  client_name: string
+  client_group: string | null
+  project_count: number
+  open_count: number
+  closed_count: number
+  ts_hours: number
+  ts_net_revenue: number
+  iow_net_revenue: number
+  residuo_eur: number
+  pct_consumo: number | null
+  at_risk_count: number
+  by_fy: (Omit<DashboardFyBreakdown, 'project_count' | 'open_count' | 'closed_count' | 'iow_net_revenue'> & { project_count: number })[]
+  by_bu: DashboardBuBreakdown[]
+}
+
 export interface DashboardData {
   fy: number
   today: string
   totals: {
     project_count: number
+    open_count: number
+    closed_count: number
     iow_hours_total: number
     iow_net_revenue_total: number
     ts_hours_total: number
@@ -124,24 +159,33 @@ export interface DashboardData {
     residuo_ore_totale: number
     residuo_eur_totale: number
   }
+  by_fy: DashboardFyBreakdown[]
+  by_bu: DashboardBuBreakdown[]
+  clients: DashboardClient[]
   at_risk_count: number
   at_risk_projects: {
     project_id: string
     project_title: string | null
     project_status: string | null
+    client_name: string | null
     data_esaurimento: string | null
     giorni_residui: number | null
     residuo_ore: number | null
   }[]
-  top_clients_by_revenue: {
-    client_name: string
-    ts_hours: number
-    ts_net_revenue: number
-    project_count: number
-  }[]
 }
 
 // ── ProjectDetail types ────────────────────────────────────────────────────────
+
+export interface WeeklyResource {
+  resource_id: string
+  resource_name: string
+  cc_code: string
+  cc_name: string
+  bu: string
+  hours: number
+  net_revenue: number
+  realization_pct: number | null
+}
 
 export interface WeeklyLoad {
   week_id: string
@@ -153,6 +197,7 @@ export interface WeeklyLoad {
   discount: number
   resources_active: number
   has_activity: boolean
+  resources: WeeklyResource[]
 }
 
 export interface DetailEntry {
@@ -233,6 +278,10 @@ export interface ProjectDetailView {
   ts_hours_total: number
   ts_gross_total: number
   ts_discount_total: number
+  ts_realization_pct: number | null
+  bi_real_pct: number | null
+  margin_pct: number | null
+  wip_provision: number | null
   by_bu: BuBreakdown[]
   by_fy: FyBreakdown[]
   weekly: WeeklyLoad[]
