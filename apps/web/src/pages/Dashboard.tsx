@@ -316,7 +316,7 @@ function ForecastClientRow({
           <p className="text-sm font-semibold text-blue-600">+{fmtEur(c.projected_additional_nr, true)}</p>
         </td>
         <td className="px-4 py-3 text-right">
-          <p className="text-sm font-bold text-slate-800">{fmtEur(c.projected_total_nr, true)}</p>
+          <p className="text-sm font-bold text-slate-800">{fmtEur(c.projected_total_nr)}</p>
         </td>
         <td className="px-4 py-3 text-right">
           <p className={`text-sm font-semibold ${c.available_budget < 0 ? 'text-red-600' : 'text-slate-700'}`}>
@@ -344,20 +344,32 @@ function ForecastClientRow({
           <td colSpan={7} className={`bg-slate-50 px-8 py-4 ${borderBottom}`}>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-              {/* BU breakdown */}
+              {/* BU+OU breakdown previsto */}
               {c.by_bu_forecast.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Breakdown BU previsto</p>
-                  <div className="space-y-1.5">
+                  <div className="space-y-2.5">
                     {c.by_bu_forecast.map((bu) => (
                       <div key={bu.bu}>
+                        {/* Riga BU */}
                         <div className="flex justify-between text-xs mb-0.5">
-                          <span className="font-medium text-slate-700">{bu.bu}</span>
-                          <span className="text-slate-500">{fmtEur(bu.forecasted_nr, true)} · {bu.pct_of_forecast.toFixed(1)}%</span>
+                          <span className="font-semibold text-slate-700">{bu.bu}</span>
+                          <span className="text-slate-600 font-medium">{fmtEur(bu.forecasted_nr, true)} · {bu.pct_of_forecast.toFixed(1)}%</span>
                         </div>
-                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden mb-1">
                           <div className="h-full bg-blue-400 rounded-full" style={{ width: `${bu.pct_of_forecast}%` }} />
                         </div>
+                        {/* Sub-righe OU (se più di uno o nome diverso da BU) */}
+                        {bu.by_ou.length > 1 && (
+                          <div className="pl-3 space-y-0.5 border-l-2 border-slate-100 ml-1">
+                            {bu.by_ou.map((ou) => (
+                              <div key={ou.ou} className="flex justify-between text-xs text-slate-500">
+                                <span>{ou.ou}</span>
+                                <span>{fmtEur(ou.forecasted_nr, true)} · {ou.pct_of_bu.toFixed(0)}% BU</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -653,7 +665,7 @@ function PrevisioningTab() {
                   {fmtEur(clients.reduce((s, c) => s + c.run_rate_weekly_nr, 0), true)}/sett
                 </td>
                 <td className="px-4 py-3 text-right text-blue-600">+{fmtEur(g.projected_additional_nr, true)}</td>
-                <td className="px-4 py-3 text-right text-slate-800">{fmtEur(g.projected_total_nr, true)}</td>
+                <td className="px-4 py-3 text-right text-slate-800">{fmtEur(g.projected_total_nr)}</td>
                 <td className={`px-4 py-3 text-right ${g.available_budget < 0 ? 'text-red-600' : 'text-slate-800'}`}>
                   {fmtEur(g.available_budget, true)}
                 </td>
@@ -768,6 +780,7 @@ function AllocationFormPanel({
   onRemove,
   onSave,
   fteData,
+  onPrecompile,
 }: {
   rows: ResourceAllocation[]
   loading: boolean
@@ -778,8 +791,16 @@ function AllocationFormPanel({
   onRemove: (i: number) => void
   onSave: () => void
   fteData: ResourceFteSummary | undefined
+  onPrecompile: (suggestions: ResourceAllocation[]) => void
 }) {
   const [showFte, setShowFte] = useState(false)
+  const [precompiling, setPrecompiling] = useState(false)
+
+  const { data: projectsData } = useQuery({
+    queryKey: ['projects-list'],
+    queryFn: () => api.projects(),
+    staleTime: 60_000,
+  })
 
   const knownResources = useMemo(
     () => (fteData ? [...new Set(fteData.resources.map((r) => r.resource_name))].sort() : []),
@@ -791,6 +812,39 @@ function AllocationFormPanel({
     rows.forEach((r) => r.client_name && clients.add(r.client_name))
     return [...clients].sort()
   }, [rows])
+
+  // Genera suggerimenti da storico FTE + project list (project_id → client_name)
+  const handlePrecompile = () => {
+    if (!fteData || !projectsData) return
+    setPrecompiling(true)
+    const projToClient: Record<string, string> = {}
+    for (const p of projectsData) {
+      if (p.client_name) projToClient[p.project_id] = p.client_name
+    }
+    // Per ogni risorsa: aggrega ore per cliente, calcola % effettiva
+    const suggestions: ResourceAllocation[] = []
+    for (const res of fteData.resources) {
+      const clientHours: Record<string, number> = {}
+      for (const p of res.projects) {
+        const cn = projToClient[p.project_id]
+        if (cn) clientHours[cn] = (clientHours[cn] ?? 0) + p.hours
+      }
+      const totalH = Object.values(clientHours).reduce((s, h) => s + h, 0)
+      if (totalH === 0) continue
+      for (const [clientName, hours] of Object.entries(clientHours)) {
+        const pct = Math.round((hours / totalH) * 100)
+        if (pct < 5) continue  // ignora contributi minimi
+        suggestions.push({
+          resource_name: res.resource_name,
+          client_name: clientName,
+          fte_target_pct: pct,
+          note: 'Pre-compilato da storico FY corrente',
+        })
+      }
+    }
+    onPrecompile(suggestions)
+    setPrecompiling(false)
+  }
 
   // Riepilogo % per risorsa (somma su tutti i clienti)
   const totalByResource = useMemo(
@@ -819,6 +873,16 @@ function AllocationFormPanel({
               className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
             >
               {saving ? 'Salvataggio...' : 'Salva'}
+            </button>
+          )}
+          {rows.length === 0 && fteData && (
+            <button
+              onClick={handlePrecompile}
+              disabled={precompiling}
+              title="Suggerisce le coppie risorsa × cliente in base allo storico FY corrente"
+              className="px-3 py-1.5 border border-blue-200 rounded-lg text-sm text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+            >
+              {precompiling ? '...' : '⟳ Pre-compila da storico'}
             </button>
           )}
           <button
@@ -1259,6 +1323,10 @@ function ResourceFteTab() {
           onRemove={removeRow}
           onSave={() => saveMut.mutate()}
           fteData={fteData}
+          onPrecompile={(suggestions) => {
+            setRows(suggestions)
+            setDirty(true)
+          }}
         />
       )}
 

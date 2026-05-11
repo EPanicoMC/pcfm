@@ -162,7 +162,13 @@ def dashboard(
         monthly = monthly_by_project.get(p.project_id, [])
         rr = calc_run_rate(monthly, "last_month")
         residuo_ore = (float(p.iow_hours_total) - ts_h) if p.iow_hours_total else None
-        mesi = calc_mesi_residui(residuo_ore, rr.hours)
+        if residuo_ore is not None:
+            mesi = calc_mesi_residui(residuo_ore, rr.hours)
+        else:
+            # Fallback su NR quando ore IOW non disponibili
+            residuo_nr_atr = (float(p.iow_net_revenue) - ts_nr) if p.iow_net_revenue else None
+            mesi = (round(residuo_nr_atr / rr.net_revenue, 4)
+                    if (residuo_nr_atr and rr.net_revenue) else None)
         data_esaur = calc_data_esaurimento(today, mesi)
         is_risk = is_at_risk(data_esaur, today, p.project_status)
 
@@ -394,35 +400,50 @@ def fy_forecast(
         .group_by(FactTimesheet.project_id, FactTimesheet.week_id)
         .all()
     )
-    # {project_id → [(week_id, nr), ...] ordinati dal più recente}
-    weekly_by_proj: dict[str, list[tuple[str, float, float]]] = {}
+
+    # Carica giroconti: {(project_id, week_id)} → da escludere dal run rate
+    from ..models.giroconti import GirocontoTag
+    giroconto_set: set[tuple[str, str]] = {
+        (g.project_id, g.week_id)
+        for g in db.query(GirocontoTag.project_id, GirocontoTag.week_id).all()
+    }
+
+    # {project_id → [(week_id, nr, hours), ...] ordinati dal più recente}
+    # Le settimane giroconto vengono mantenute per lo storico visivo (_weekly)
+    # ma escluse dal calcolo del run rate (_weekly_open)
+    weekly_by_proj: dict[str, list[tuple[str, float, float, bool]]] = {}
     for r in ts_weekly_rows:
+        is_giroconto = (r.project_id, r.week_id) in giroconto_set
         weekly_by_proj.setdefault(r.project_id, []).append(
-            (r.week_id, float(r.nr or 0), float(r.hours or 0))
+            (r.week_id, float(r.nr or 0), float(r.hours or 0), is_giroconto)
         )
     for pid in weekly_by_proj:
         weekly_by_proj[pid].sort(key=lambda x: x[0], reverse=True)
 
-    # ── BU mix per progetto (FY corrente) per allocazione forecast ────────────
+    # ── BU+OU mix per progetto (FY corrente) per allocazione forecast ─────────
     ts_fy_bu_rows = (
         db.query(
             FactTimesheet.project_id,
             func.coalesce(DimCostCenter.bu, "—").label("bu"),
+            func.coalesce(DimCostCenter.ou, "—").label("ou"),
             func.sum(FactTimesheet.net_revenue_actual).label("nr"),
         )
         .outerjoin(DimCostCenter, FactTimesheet.resource_cost_center == DimCostCenter.cc_code)
         .filter(FactTimesheet.is_stale == 0, FactTimesheet.fy == current_fy)
-        .group_by(FactTimesheet.project_id, DimCostCenter.bu)
+        .group_by(FactTimesheet.project_id, DimCostCenter.bu, DimCostCenter.ou)
         .all()
     )
-    # {project_id → {bu → pct}}
-    bu_mix_by_proj: dict[str, dict[str, float]] = {}
+    # {project_id → {bu → {ou → nr_abs}}} → poi normalizzato a pct
+    bu_mix_by_proj: dict[str, dict[str, dict[str, float]]] = {}
     for r in ts_fy_bu_rows:
-        bu_mix_by_proj.setdefault(r.project_id, {})[r.bu] = float(r.nr or 0)
-    for pid, bus in bu_mix_by_proj.items():
-        total = sum(bus.values())
+        bu_mix_by_proj.setdefault(r.project_id, {}).setdefault(r.bu, {})[r.ou] = float(r.nr or 0)
+    # Normalizza: bu_mix_by_proj[pid][bu][ou] = fraction of total NR
+    for pid, bu_map in bu_mix_by_proj.items():
+        total = sum(nr for ou_map in bu_map.values() for nr in ou_map.values())
         if total:
-            bu_mix_by_proj[pid] = {bu: nr / total for bu, nr in bus.items()}
+            for bu in bu_map:
+                for ou in bu_map[bu]:
+                    bu_map[bu][ou] /= total
 
     # ── Aggrega per cliente ───────────────────────────────────────────────────
     by_client: dict[str, dict[str, Any]] = {}
@@ -446,8 +467,7 @@ def fy_forecast(
         # weekly: usato sia per run rate che per storico settimanale per cliente
         weekly = weekly_by_proj.get(p.project_id, [])
 
-        # Residuo e run rate: solo per codici aperti (quelli "In Chiusura" non hanno
-        # budget prelevabile e non genereranno NR futuro)
+        # Residuo e run rate: solo per codici aperti
         if is_closed:
             residuo_nr = 0.0
             residuo_ore = None
@@ -456,7 +476,9 @@ def fy_forecast(
         else:
             residuo_nr = (iow_nr - nr_actual) if iow_nr else 0.0
             residuo_ore = (iow_hours - hours_actual) if iow_hours else None
-            last4 = weekly[:4]
+            # Escludi settimane giroconto dal run rate per-progetto (usato per BU mix weighting)
+            non_giroconto = [w for w in weekly if not w[3]]
+            last4 = non_giroconto[:4]
             rr_nr = sum(w[1] for w in last4) / len(last4) if last4 else 0.0
             rr_hours = sum(w[2] for w in last4) / len(last4) if last4 else 0.0
 
@@ -469,11 +491,12 @@ def fy_forecast(
                 "ts_nr_ytd": 0.0,
                 "ts_hours_ytd": 0.0,
                 "available_budget_nr": 0.0,
-                "available_budget_hours": 0.0,   # solo da progetti con dati IOW ore
+                "available_budget_hours": 0.0,
                 "_has_hours_data": False,
+                # {bu → {ou → weighted_nr}} — per forecast BU+OU breakdown
                 "_bu_weighted": {},
-                "_weekly": {},       # week_id → {nr, hours} storico tutti i codici
-                "_weekly_open": {},  # week_id → {nr, hours} solo codici aperti (per run rate)
+                "_weekly": {},
+                "_weekly_open": {},
             }
         c = by_client[cn]
         c["ts_nr_ytd"] += ts_fy["nr"]
@@ -483,18 +506,22 @@ def fy_forecast(
             c["available_budget_hours"] += residuo_ore
             c["_has_hours_data"] = True
 
-        # BU mix pesata per run rate (contribuzione proporzionale al ritmo del progetto)
-        for bu, pct in bu_mix.items():
-            c["_bu_weighted"].setdefault(bu, 0.0)
-            c["_bu_weighted"][bu] += rr_nr * pct
+        # BU+OU mix pesata per run rate
+        for bu, ou_map in bu_mix.items():
+            c["_bu_weighted"].setdefault(bu, {})
+            for ou, pct in ou_map.items():
+                c["_bu_weighted"][bu].setdefault(ou, 0.0)
+                c["_bu_weighted"][bu][ou] += rr_nr * pct
 
-        # Storico settimanale: _weekly include tutti i codici (reale storico)
-        # _weekly_open solo codici aperti (base per il run rate di proiezione)
-        for wid, w_nr, w_hours in weekly:
-            c["_weekly"].setdefault(wid, {"nr": 0.0, "hours": 0.0})
+        # Storico settimanale: _weekly include tutti i codici (reale storico, con giroconti)
+        # _weekly_open solo codici aperti e non-giroconto (base per il run rate)
+        for wid, w_nr, w_hours, w_is_giroconto in weekly:
+            c["_weekly"].setdefault(wid, {"nr": 0.0, "hours": 0.0, "has_giroconto": False})
             c["_weekly"][wid]["nr"] += w_nr
             c["_weekly"][wid]["hours"] += w_hours
-            if not is_closed:
+            if w_is_giroconto:
+                c["_weekly"][wid]["has_giroconto"] = True
+            if not is_closed and not w_is_giroconto:
                 c["_weekly_open"].setdefault(wid, {"nr": 0.0, "hours": 0.0})
                 c["_weekly_open"][wid]["nr"] += w_nr
                 c["_weekly_open"][wid]["hours"] += w_hours
@@ -553,16 +580,39 @@ def fy_forecast(
         else:
             status = "green"
 
-        # Breakdown BU della produzione prevista (usa mix del FY corrente)
-        bu_total = sum(c["_bu_weighted"].values())
-        by_bu_forecast = [
-            {
+        # Breakdown BU+OU della produzione prevista (usa mix del FY corrente)
+        # _bu_weighted = {bu → {ou → weighted_nr}}
+        bu_grand_total = sum(
+            ou_nr for ou_map in c["_bu_weighted"].values() for ou_nr in ou_map.values()
+        )
+        by_bu_forecast = []
+        for bu, ou_map in sorted(
+            c["_bu_weighted"].items(),
+            key=lambda x: sum(x[1].values()),
+            reverse=True,
+        ):
+            bu_nr = sum(ou_map.values())
+            bu_pct = round(bu_nr / bu_grand_total * 100, 1) if bu_grand_total else 0.0
+            bu_forecasted = round(bu_nr / bu_grand_total * projected_additional, 2) if bu_grand_total else 0.0
+            by_ou = sorted(
+                [
+                    {
+                        "ou": ou,
+                        "forecasted_nr": round(ou_nr / bu_grand_total * projected_additional, 2) if bu_grand_total else 0.0,
+                        "pct_of_forecast": round(ou_nr / bu_grand_total * 100, 1) if bu_grand_total else 0.0,
+                        "pct_of_bu": round(ou_nr / bu_nr * 100, 1) if bu_nr else 0.0,
+                    }
+                    for ou, ou_nr in ou_map.items()
+                ],
+                key=lambda x: x["forecasted_nr"],
+                reverse=True,
+            )
+            by_bu_forecast.append({
                 "bu": bu,
-                "forecasted_nr": round((nr / bu_total) * projected_additional, 2) if bu_total else 0.0,
-                "pct_of_forecast": round((nr / bu_total) * 100, 1) if bu_total else 0.0,
-            }
-            for bu, nr in sorted(c["_bu_weighted"].items(), key=lambda x: x[1], reverse=True)
-        ]
+                "forecasted_nr": bu_forecasted,
+                "pct_of_forecast": bu_pct,
+                "by_ou": by_ou,
+            })
 
         total_ts_ytd += c["ts_nr_ytd"]
         total_additional += projected_additional
@@ -586,26 +636,29 @@ def fy_forecast(
             "by_bu_forecast": by_bu_forecast,
             # Storico settimanale FY corrente (per preview base previsione + proiezione UI)
             "actual_weeks_fy": [
-                {"week_id": wid, "nr": round(d["nr"], 2), "hours": round(d["hours"], 1)}
+                {
+                    "week_id": wid,
+                    "nr": round(d["nr"], 2),
+                    "hours": round(d["hours"], 1),
+                    "is_giroconto": d.get("has_giroconto", False),
+                }
                 for wid, d in sorted(c["_weekly"].items(), reverse=True)[:16]
             ],
         })
 
     clients_result.sort(key=lambda x: x["projected_total_nr"], reverse=True)
 
-    # ── Semaforo globale ──
-    global_additional = total_additional
-    # Settimane di copertura NR globale (le ore non si sommano significativamente)
-    global_weeks = (total_available_nr / (global_additional / weeks_remaining)) if (global_additional > 0 and weeks_remaining > 0) else INF
-    if global_additional == 0:
+    # ── Semaforo globale: worst-case tra i clienti ────────────────────────────
+    statuses = [c["coverage_status"] for c in clients_result]
+    if not statuses or all(s == "grey" for s in statuses):
         global_status = "grey"
-    elif total_available_nr <= 0:
+    elif "red" in statuses:
         global_status = "red"
-    elif global_weeks < weeks_remaining * 0.95:
-        deficit = weeks_remaining - global_weeks
-        global_status = "red" if deficit > 2 else "amber"
+    elif "amber" in statuses:
+        global_status = "amber"
     else:
         global_status = "green"
+    global_additional = total_additional
 
     return {
         "fy": current_fy,

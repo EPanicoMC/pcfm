@@ -1,10 +1,10 @@
 import { useState, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts'
-import { api, BuBreakdown, DetailEntry, WeeklyForecast, WeeklyLoad, WeeklyResource } from '../api/client'
+import { api, BuBreakdown, DetailEntry, GirocontoTag, WeeklyForecast, WeeklyLoad, WeeklyResource } from '../api/client'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -522,14 +522,27 @@ function ResourceSubTable({ resources, activeFilter }: { resources: WeeklyResour
 }
 
 function WeeklySection({
-  entries, weekly, activeFilter,
+  entries, weekly, activeFilter, projectId, giroconti,
 }: {
   entries: DetailEntry[]
   weekly: WeeklyLoad[]
   activeFilter: ActiveFilter
+  projectId: string
+  giroconti: GirocontoTag[]
 }) {
+  const queryClient = useQueryClient()
   const [dateFilter, setDateFilter] = useState<DateFilter>({ mode: 'all' })
   const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(new Set())
+
+  const girocontiSet = useMemo(() => new Set(giroconti.map(g => g.week_id)), [giroconti])
+
+  const tagMut = useMutation({
+    mutationFn: ({ week_id, tag }: { week_id: string; tag: boolean }) =>
+      tag
+        ? api.tagGiroconto(projectId, week_id, 'Giroconto')
+        : api.untagGiroconto(projectId, week_id).then(() => null),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['giroconti', projectId] }),
+  })
 
   const weeklyMap = useMemo(() => new Map(weekly.map(w => [w.week_id, w])), [weekly])
 
@@ -588,8 +601,8 @@ function WeeklySection({
     setExpandedWeeks(prev => { const s = new Set(prev); s.has(weekId) ? s.delete(weekId) : s.add(weekId); return s })
   }
 
-  // Colonne totali: expand + data + FY + ore + lordo + sconto + netto + (risorse count se no filtro) = 7 o 8
-  const colCount = useOriginalWeekly ? 8 : 7
+  // Colonne: expand + data + FY + ore + lordo + sconto + netto + (risorse) + G = 8 o 9
+  const colCount = useOriginalWeekly ? 9 : 8
 
   return (
     <section>
@@ -665,6 +678,7 @@ function WeeklySection({
               <th className="text-right px-3 py-3">Sconto</th>
               <th className="text-right px-3 py-3 font-semibold text-slate-700">Netto</th>
               {useOriginalWeekly && <th className="text-right px-3 py-3">Risorse</th>}
+              <th className="w-10 text-center px-1 py-3 text-slate-400" title="Giroconto — escludi dal previsioning">G</th>
             </tr>
           </thead>
           <tbody>
@@ -707,6 +721,21 @@ function WeeklySection({
                         {hasAct ? (w as WeeklyLoad).resources_active : '—'}
                       </td>
                     )}
+                    <td className="px-1 py-3 text-center">
+                      {hasAct && (
+                        <button
+                          title={girocontiSet.has(w.week_id) ? 'Rimuovi tag giroconto' : 'Marca come giroconto (escluso dal previsioning)'}
+                          onClick={() => tagMut.mutate({ week_id: w.week_id, tag: !girocontiSet.has(w.week_id) })}
+                          className={`w-6 h-6 rounded text-xs font-bold transition-colors ${
+                            girocontiSet.has(w.week_id)
+                              ? 'bg-orange-500 text-white'
+                              : 'bg-slate-100 text-slate-400 hover:bg-orange-100 hover:text-orange-600'
+                          }`}
+                        >
+                          G
+                        </button>
+                      )}
+                    </td>
                   </tr>
                   {/* Riga espansa con dettaglio risorse */}
                   {expanded && (
@@ -775,6 +804,12 @@ export default function ProjectDetail() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['project-detail', id],
     queryFn: () => api.projectDetail(id!),
+  })
+
+  const { data: girocontiData } = useQuery({
+    queryKey: ['giroconti', id],
+    queryFn: () => api.giroconti(id),
+    enabled: !!id,
   })
 
   if (isLoading) return <div className="p-8 text-slate-500">Caricamento...</div>
@@ -963,6 +998,8 @@ export default function ProjectDetail() {
         entries={d.entries}
         weekly={d.weekly}
         activeFilter={activeFilter}
+        projectId={d.project_id}
+        giroconti={girocontiData ?? []}
       />
 
     </div>

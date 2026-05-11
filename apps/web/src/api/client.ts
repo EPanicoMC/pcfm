@@ -155,10 +155,18 @@ export interface DashboardClient {
 
 // ── Previsione chiusura FY ─────────────────────────────────────────────────
 
+export interface DashboardFyForecastOu {
+  ou: string
+  forecasted_nr: number
+  pct_of_forecast: number
+  pct_of_bu: number
+}
+
 export interface DashboardFyForecastBu {
   bu: string
   forecasted_nr: number
   pct_of_forecast: number
+  by_ou: DashboardFyForecastOu[]
 }
 
 export interface DashboardFyForecastClient {
@@ -177,7 +185,7 @@ export interface DashboardFyForecastClient {
   exhaustion_type: 'hours' | 'nr' | 'ok'
   coverage_status: 'green' | 'amber' | 'red' | 'grey'
   by_bu_forecast: DashboardFyForecastBu[]
-  actual_weeks_fy: { week_id: string; nr: number; hours: number }[]
+  actual_weeks_fy: { week_id: string; nr: number; hours: number; is_giroconto: boolean }[]
 }
 
 export interface DashboardFyForecast {
@@ -420,6 +428,16 @@ export interface LastWeekSummary {
   resources: LastWeekResource[]
 }
 
+// ── Giroconti ─────────────────────────────────────────────────────────────────
+
+export interface GirocontoTag {
+  id: number
+  project_id: string
+  week_id: string
+  note: string | null
+  created_at: string
+}
+
 // ── Resource Allocations ──────────────────────────────────────────────────────
 
 export interface ResourceAllocation {
@@ -508,4 +526,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(items),
     }),
+
+  giroconti: (project_id?: string) =>
+    req<GirocontoTag[]>(`/giroconti${project_id ? `?project_id=${encodeURIComponent(project_id)}` : ''}`),
+
+  tagGiroconto: (project_id: string, week_id: string, note?: string) =>
+    req<GirocontoTag>(`/giroconti/${encodeURIComponent(project_id)}/${week_id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: note ?? null }),
+    }),
+
+  untagGiroconto: (project_id: string, week_id: string) =>
+    fetch(`/api/giroconti/${encodeURIComponent(project_id)}/${week_id}`, { method: 'DELETE' }),
 }

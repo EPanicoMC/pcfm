@@ -228,9 +228,21 @@ def test_forecast_fy_no_data_returns_none():
 
 
 # ── Test is_at_risk ────────────────────────────────────────────────────────────
+# Soglia default: 30 giorni (abbassata da 60)
 
-def test_at_risk_within_60d():
-    assert is_at_risk(date(2026, 6, 30), date(2026, 5, 10), "Active") is True
+def test_at_risk_within_30d():
+    # 20 giorni → a rischio con soglia 30
+    assert is_at_risk(date(2026, 5, 30), date(2026, 5, 10), "Active") is True
+
+
+def test_at_risk_exact_30d():
+    # esattamente 30 giorni → a rischio
+    assert is_at_risk(date(2026, 6, 9), date(2026, 5, 10), "Active") is True
+
+
+def test_not_at_risk_31d():
+    # 51 giorni → NON a rischio con soglia 30 (era True con soglia 60)
+    assert is_at_risk(date(2026, 6, 30), date(2026, 5, 10), "Active") is False
 
 
 def test_not_at_risk_far():

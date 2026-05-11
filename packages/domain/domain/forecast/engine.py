@@ -162,10 +162,11 @@ def is_at_risk(
     data_esaurimento: date | None,
     today: date,
     project_status: str | None,
+    threshold_days: int = 30,
 ) -> bool:
-    """True se il progetto esaurisce le ore entro 60 giorni (esclusi 'In Chiusura')."""
+    """True se il progetto esaurisce le risorse entro threshold_days (default 30, esclusi 'In Chiusura')."""
     if data_esaurimento is None:
         return False
     if project_status == "In Chiusura":
         return False
-    return (data_esaurimento - today).days <= 60
+    return (data_esaurimento - today).days <= threshold_days
