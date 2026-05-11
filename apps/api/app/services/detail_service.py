@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..models.dimensions import DimCostCenter, DimWeek
+from ..models.dimensions import DimCostCenter, DimResource, DimWeek
 from ..models.facts import FactProject, FactTimesheet
 
 
@@ -46,6 +46,7 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
     cc_agg: dict[str, dict] = {}
     fy_map: dict[int, dict] = {}
     week_cc: dict[tuple, dict] = {}
+    week_res: dict[tuple, dict] = {}  # (week_id, resource_id) → dati risorsa
 
     for ts in ts_rows:
         wid = ts.week_id
@@ -61,6 +62,9 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
         cc_display = cc_code if cc_code != "__ND__" else "N/D"
         cc_name = (dim_cc.cc_name if dim_cc else None) or cc_display
         bu = (dim_cc.bu if dim_cc else None) or "N/D"
+
+        dim_res = db.get(DimResource, ts.resource_id)
+        resource_name = (dim_res.resource_name if dim_res else None) or ts.resource_id
 
         h = ts.hours_actual or 0.0
         nr = ts.net_revenue_actual or 0.0
@@ -92,6 +96,23 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
         fy_map[fy]["hours"] += h
         fy_map[fy]["net_revenue"] += nr
         fy_map[fy]["weeks"].add(wid)
+
+        # Settimana × Risorsa (per drill-down nella UI)
+        rkey = (wid, ts.resource_id)
+        if rkey not in week_res:
+            week_res[rkey] = {
+                "resource_id": ts.resource_id,
+                "resource_name": resource_name,
+                "cc_code": cc_display,
+                "cc_name": cc_name,
+                "bu": bu,
+                "hours": 0.0,
+                "net_revenue": 0.0,
+                "gross_revenue": 0.0,
+            }
+        week_res[rkey]["hours"] += h
+        week_res[rkey]["net_revenue"] += nr
+        week_res[rkey]["gross_revenue"] += gr
 
         # Entries flat (settimana × CC)
         key = (wid, cc_code)
@@ -157,13 +178,33 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
         key=lambda x: x["fy"],
     )
 
+    # ── Risorse aggregate per settimana ───────────────────────────────────────
+    by_week_resources: dict[str, list] = {}
+    for (wid, _rid), r in week_res.items():
+        if wid not in by_week_resources:
+            by_week_resources[wid] = []
+        real_pct = round(r["net_revenue"] / r["gross_revenue"] * 100, 1) if r["gross_revenue"] else None
+        by_week_resources[wid].append({
+            "resource_id": r["resource_id"],
+            "resource_name": r["resource_name"],
+            "cc_code": r["cc_code"],
+            "cc_name": r["cc_name"],
+            "bu": r["bu"],
+            "hours": round(r["hours"], 1),
+            "net_revenue": round(r["net_revenue"], 2),
+            "realization_pct": real_pct,
+        })
+    for wid in by_week_resources:
+        by_week_resources[wid].sort(key=lambda x: x["net_revenue"], reverse=True)
+
     # ── Lista settimanale (per vista default non filtrata) ─────────────────────
     weekly_list = sorted(
         [{"week_id": w["week_id"], "week_end": w["week_end"], "fy": w["fy"],
           "hours": round(w["hours"], 1), "net_revenue": round(w["net_revenue"], 2),
           "gross_revenue": round(w["gross_revenue"], 2), "discount": round(w["discount"], 2),
           "resources_active": len(w["resources"]),
-          "has_activity": w["hours"] > 0 or abs(w["net_revenue"]) > 0.01}
+          "has_activity": w["hours"] > 0 or abs(w["net_revenue"]) > 0.01,
+          "resources": by_week_resources.get(w["week_id"], [])}
          for w in weekly.values()],
         key=lambda x: x["week_id"], reverse=True,
     )
@@ -181,6 +222,14 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
     # ── Forecast basato su settimane attive (TS importati) ────────────────────
     active_wids = [w["week_id"] for w in weekly_list if w["has_activity"]]
     forecast = _calc_weekly_forecast(active_wids, weekly, residuo_eur)
+
+    # ── Realizzo e margine ────────────────────────────────────────────────────
+    # Realizzo da timesheet importati (NR / Lordo dei TS caricati)
+    ts_realization_pct = round(ts_nr_total / ts_gross_total * 100, 1) if ts_gross_total else None
+    # Realizzo e margine da File 9 (autoritativi da BI)
+    bi_real_pct = float(p.bi_real_pct_todo) if p.bi_real_pct_todo else None
+    margin_pct = float(p.margin_pct) if p.margin_pct else None
+    wip_provision_total = float(p.wip_provision) if p.wip_provision else None
 
     client = p.client
     return {
@@ -211,6 +260,11 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
         "ts_hours_total": round(ts_hours_total, 1),
         "ts_gross_total": round(ts_gross_total, 2),
         "ts_discount_total": round(ts_discount_total, 2),
+        # Realizzo e margine
+        "ts_realization_pct": ts_realization_pct,  # realizzo dai TS importati
+        "bi_real_pct": bi_real_pct,                # realizzo autoritative da File 9
+        "margin_pct": margin_pct,                  # margine da File 9
+        "wip_provision": wip_provision_total,
         # Breakdown
         "by_bu": by_bu,
         "by_fy": by_fy,

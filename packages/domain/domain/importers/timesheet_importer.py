@@ -50,6 +50,10 @@ _FLOAT_FIELDS = {
     "hours_actual", "gross_revenue", "discount", "wip_provision",
     "net_revenue_actual", "gross_rate", "net_rate",
 }
+# Campi da sommare durante aggregazione righe duplicate (stesso resource×periodo fiscale)
+_SUM_FIELDS = {"hours_actual", "gross_revenue", "discount", "wip_provision", "net_revenue_actual"}
+# Tassi: tenere il primo valore non-zero
+_RATE_FIELDS = {"gross_rate", "net_rate"}
 
 
 @dataclass
@@ -103,8 +107,8 @@ def extract_project_id_from_filename(filename: str) -> str:
     return p.name
 
 
-def make_timesheet_id(resource_id: str, project_id: str, week_id: str) -> str:
-    key = f"{resource_id}|{project_id}|{week_id}"
+def make_timesheet_id(resource_id: str, project_id: str, fy_month_week: str) -> str:
+    key = f"{resource_id}|{project_id}|{fy_month_week}"
     return hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -192,15 +196,32 @@ def _parse_raw_rows(
 ) -> TimesheetImportResult:
     result = TimesheetImportResult(project_id=project_id, file_type_confirmed=True)
 
+    raw_rows_parsed: list[TimesheetRow] = []
     for raw in raw_rows:
         try:
             row = _parse_single_row(raw, project_id, using_original_headers)
             if row is not None:
-                result.rows.append(row)
+                raw_rows_parsed.append(row)
         except Exception as e:
             rid = raw.get("resource_id") or raw.get(_COL_RESOURCE_ID) or "?"
             result.parse_errors.append(f"risorsa {rid}: {e}")
 
+    # Aggrega righe con stesso timesheet_id (es. righe duplicate con 0 e valori reali)
+    aggregated: dict[str, TimesheetRow] = {}
+    for row in raw_rows_parsed:
+        if row.timesheet_id not in aggregated:
+            aggregated[row.timesheet_id] = row
+        else:
+            base = aggregated[row.timesheet_id]
+            for f in _SUM_FIELDS:
+                base_val = getattr(base, f) or 0.0
+                new_val = getattr(row, f) or 0.0
+                setattr(base, f, round(base_val + new_val, 4))
+            for f in _RATE_FIELDS:
+                if not getattr(base, f) and getattr(row, f):
+                    setattr(base, f, getattr(row, f))
+
+    result.rows = list(aggregated.values())
     return result
 
 
@@ -237,7 +258,8 @@ def _parse_single_row(raw: dict, project_id: str, using_original_headers: bool) 
 
     week_id = week_start.isoformat()
     month_id = f"{week_start.year}-{week_start.month:02d}"
-    timesheet_id = make_timesheet_id(resource_id, project_id, week_id)
+    fy_month_week_str = _str(norm.get("fy_month_week")) or week_id
+    timesheet_id = make_timesheet_id(resource_id, project_id, fy_month_week_str)
 
     kwargs: dict[str, Any] = {
         "timesheet_id": timesheet_id,

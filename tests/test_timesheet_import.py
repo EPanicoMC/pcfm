@@ -30,7 +30,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 TIMESHEET_CSV = FIXTURES / "timesheet_ITE00065885_1_1.csv"
 PROJECTS_CSV = FIXTURES / "projects.csv"
 SAMPLES_DIR = Path(__file__).parents[1] / "samples"
-TIMESHEET_XLSX = SAMPLES_DIR / "data (8).xlsx"
+TIMESHEET_XLSX = SAMPLES_DIR / "ITE00065885.1.1.xlsx"
 PROJECT_ID = "ITE00065885.1.1"
 
 
@@ -164,7 +164,8 @@ def test_parse_csv_cost_center():
 @pytest.mark.skipif(not TIMESHEET_XLSX.exists(), reason="file sample non disponibile")
 def test_parse_xlsx_real_file():
     result = parse_xlsx(TIMESHEET_XLSX, PROJECT_ID)
-    assert len(result.rows) == 156
+    # 98 righe dati valide (con WeekRange + ResourceID), grand total e footer già filtrati
+    assert len(result.rows) == 98
     assert result.parse_errors == []
 
 
@@ -261,7 +262,19 @@ def test_import_real_xlsx(db_with_project):
     result = run_timesheet_import(db_with_project, TIMESHEET_XLSX, "ITE00065885.1.1.xlsx")
     assert result["status"] == "success"
     assert result["project_id"] == "ITE00065885.1.1"
-    # 156 righe raw, 81 timesheet_id unici → 75 hash duplicati (stesso resource×week).
-    # Dei 75 duplicati: alcuni hanno valori identici (skipped) altri differenti (updated).
-    assert result["inserted"] == 81
-    assert result["skipped"] + result["updated"] == 75
+    # 98 righe valide, ogni (resource_id, fy_month_week) è unico → 98 insert
+    assert result["inserted"] == 98
+    assert result["updated"] == 0
+    assert result["skipped"] == 0
+
+
+@pytest.mark.skipif(not TIMESHEET_XLSX.exists(), reason="file sample non disponibile")
+def test_import_real_xlsx_nr_total(db_with_project):
+    """Verifica che la somma NR importata corrisponda al grand total del file."""
+    run_timesheet_import(db_with_project, TIMESHEET_XLSX, "ITE00065885.1.1.xlsx")
+    from apps.api.app.models.facts import FactTimesheet
+    from sqlalchemy import func
+    total_nr = db_with_project.query(
+        func.sum(FactTimesheet.net_revenue_actual)
+    ).filter(FactTimesheet.project_id == PROJECT_ID, FactTimesheet.is_stale == 0).scalar()
+    assert total_nr == pytest.approx(121304.95, abs=1.0)

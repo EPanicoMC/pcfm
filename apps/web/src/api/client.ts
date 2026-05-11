@@ -362,6 +362,33 @@ export interface ImportRecord {
   backup_path: string | null
 }
 
+// ── Last week loadings ─────────────────────────────────────────────────────────
+
+export interface LastWeekProject {
+  project_id: string
+  project_title: string | null
+  hours: number
+}
+
+export interface LastWeekResource {
+  resource_id: string
+  resource_name: string
+  bu: string
+  hours_last_week: number
+  avg_4w_hours: number | null
+  deviation_pct: number | null
+  flag: 'normal' | 'low' | 'high' | 'new'
+  projects: LastWeekProject[]
+}
+
+export interface LastWeekSummary {
+  week_id: string | null
+  week_end: string | null
+  total_hours: number
+  total_resources: number
+  resources: LastWeekResource[]
+}
+
 // ── API functions ──────────────────────────────────────────────────────────────
 
 export const api = {
@@ -425,4 +452,6 @@ export const api = {
     form.append('file', file)
     return req<Record<string, unknown>>('/import/confirm', { method: 'POST', body: form })
   },
+
+  lastWeek: () => req<LastWeekSummary>('/dashboard/last-week'),
 }

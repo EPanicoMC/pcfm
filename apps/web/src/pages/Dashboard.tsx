@@ -12,6 +12,7 @@ import {
   DashboardBuBreakdown,
   DashboardFyBreakdown,
   DashboardFyForecastClient,
+  LastWeekResource,
 } from '../api/client'
 
 // ── Formattatori ─────────────────────────────────────────────────────────────
@@ -316,6 +317,113 @@ function ForecastClientRow({ c, isLast }: { c: DashboardFyForecastClient; isLast
         </tr>
       )}
     </>
+  )
+}
+
+// ── Widget ultima settimana ───────────────────────────────────────────────────
+
+function FlagBadge({ flag, dev }: { flag: LastWeekResource['flag']; dev: number | null }) {
+  if (flag === 'new') return <span className="text-xs text-slate-400 italic">nuovo</span>
+  if (flag === 'normal') return <span className="text-xs text-green-600 font-medium">✓</span>
+  const isHigh = flag === 'high'
+  return (
+    <span className={`text-xs font-semibold ${isHigh ? 'text-orange-600' : 'text-red-600'}`}>
+      {isHigh ? '▲' : '▼'} {dev != null ? `${Math.abs(dev).toFixed(0)}%` : ''}
+    </span>
+  )
+}
+
+function LastWeekWidget() {
+  const [expanded, setExpanded] = useState(true)
+  const [showAll, setShowAll] = useState(false)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['dashboard-last-week'],
+    queryFn: () => api.lastWeek(),
+  })
+
+  if (isLoading) return null
+  if (!data || !data.week_id) return null
+
+  const weekLabel = data.week_end
+    ? new Date(data.week_end).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
+    : data.week_id
+
+  const anomalies = data.resources.filter((r) => r.flag === 'high' || r.flag === 'low')
+  const displayResources = showAll ? data.resources : data.resources.slice(0, 8)
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+      {/* Header cliccabile */}
+      <button
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors rounded-xl"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-slate-700">Caricamenti ultima settimana</span>
+          <span className="text-xs text-slate-400 font-normal">· settimana {weekLabel}</span>
+          <span className="text-xs bg-slate-100 text-slate-600 rounded-full px-2 py-0.5 font-medium">
+            {data.total_resources} risorse · {fmtN(data.total_hours, 0)}h totali
+          </span>
+          {anomalies.length > 0 && (
+            <span className="text-xs bg-red-50 text-red-600 rounded-full px-2 py-0.5 font-semibold">
+              ⚠ {anomalies.length} anomali{anomalies.length === 1 ? 'a' : 'e'}
+            </span>
+          )}
+        </div>
+        <span className="text-slate-400 text-xs">{expanded ? '▾' : '▸'}</span>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-100 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-slate-50 text-slate-400 uppercase tracking-wide">
+                <th className="text-left px-4 py-2 font-medium">Risorsa</th>
+                <th className="text-left px-4 py-2 font-medium">BU</th>
+                <th className="text-right px-4 py-2 font-medium">Ore sett.</th>
+                <th className="text-right px-4 py-2 font-medium">Media 4w</th>
+                <th className="text-center px-4 py-2 font-medium">Δ</th>
+                <th className="text-left px-4 py-2 font-medium">Progetti</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {displayResources.map((r) => {
+                const isAnomaly = r.flag === 'high' || r.flag === 'low'
+                return (
+                  <tr key={r.resource_id} className={isAnomaly ? 'bg-red-50/40' : 'hover:bg-slate-50'}>
+                    <td className="px-4 py-2 font-medium text-slate-700">{r.resource_name}</td>
+                    <td className="px-4 py-2 text-slate-500">{r.bu}</td>
+                    <td className="px-4 py-2 text-right font-semibold text-slate-800">
+                      {fmtN(r.hours_last_week, 1)}h
+                    </td>
+                    <td className="px-4 py-2 text-right text-slate-400">
+                      {r.avg_4w_hours != null ? `${fmtN(r.avg_4w_hours, 1)}h` : '—'}
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <FlagBadge flag={r.flag} dev={r.deviation_pct} />
+                    </td>
+                    <td className="px-4 py-2 text-slate-400 max-w-[280px] truncate">
+                      {r.projects.map((p) => `${p.project_id} (${p.hours}h)`).join(' · ')}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          {data.resources.length > 8 && (
+            <div className="px-4 py-2 border-t border-slate-100 text-center">
+              <button
+                onClick={() => setShowAll((v) => !v)}
+                className="text-xs text-blue-600 hover:underline"
+              >
+                {showAll ? `Mostra meno` : `Mostra tutte le ${data.resources.length} risorse`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -832,6 +940,9 @@ export default function Dashboard() {
               )}
             </div>
           </div>
+
+          {/* Caricamenti ultima settimana */}
+          <LastWeekWidget />
         </>
       )}
 

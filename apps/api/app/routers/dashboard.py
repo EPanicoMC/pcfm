@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models.dimensions import DimCostCenter
+from ..models.dimensions import DimCostCenter, DimResource, DimWeek
 from ..models.facts import FactProject, FactTimesheet
 from domain.forecast import (
     calc_data_esaurimento,
@@ -436,17 +436,27 @@ def fy_forecast(
         ts_fy = ts_fy_map.get(p.project_id, {"nr": 0.0, "hours": 0.0})
         iow_nr = float(p.iow_net_revenue or 0)
         iow_hours = float(p.iow_hours_total or 0)
+        is_closed = p.project_status == "In Chiusura"
 
-        # Residuo NR (IOW NR - NR consumato all-time)
-        residuo_nr = (iow_nr - ts_all["nr"]) if iow_nr else 0.0
-        # Residuo ore (IOW hours - ore consumate all-time) — None se dati File9 assenti
-        residuo_ore = (iow_hours - ts_all["hours"]) if iow_hours else None
+        # NR/ore autoritativi da File 9 quando disponibili (coerenza con ProjectDetail)
+        # Fallback sulla somma timesheet se File 9 non è stato caricato per questo codice
+        nr_actual = float(p.net_revenue_act) if p.net_revenue_act else ts_all["nr"]
+        hours_actual = float(p.hours_actual) if p.hours_actual else ts_all["hours"]
 
-        # Run rate settimanale: media ultime 4 settimane del FY corrente
-        weekly = weekly_by_proj.get(p.project_id, [])
-        last4 = weekly[:4]
-        rr_nr = sum(w[1] for w in last4) / len(last4) if last4 else 0.0
-        rr_hours = sum(w[2] for w in last4) / len(last4) if last4 else 0.0
+        # Residuo e run rate: solo per codici aperti (quelli "In Chiusura" non hanno
+        # budget prelevabile e non genereranno NR futuro)
+        if is_closed:
+            residuo_nr = 0.0
+            residuo_ore = None
+            rr_nr = 0.0
+            rr_hours = 0.0
+        else:
+            residuo_nr = (iow_nr - nr_actual) if iow_nr else 0.0
+            residuo_ore = (iow_hours - hours_actual) if iow_hours else None
+            weekly = weekly_by_proj.get(p.project_id, [])
+            last4 = weekly[:4]
+            rr_nr = sum(w[1] for w in last4) / len(last4) if last4 else 0.0
+            rr_hours = sum(w[2] for w in last4) / len(last4) if last4 else 0.0
 
         bu_mix = bu_mix_by_proj.get(p.project_id, {})
 
@@ -593,4 +603,133 @@ def fy_forecast(
             "coverage_status": global_status,
         },
         "clients": clients_result,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /api/dashboard/last-week  — Riepilogo caricamenti ultima settimana
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/last-week")
+def last_week_summary(db: Session = Depends(get_db)):
+    """
+    Caricamenti dell'ultima settimana con dati, aggregati per risorsa.
+    Confronto con media delle 4 settimane precedenti per rilevare anomalie.
+    """
+    # Trova le 5 settimane più recenti con dati (ultima + 4 prior per media)
+    recent_weeks = (
+        db.query(FactTimesheet.week_id)
+        .filter(FactTimesheet.is_stale == 0)
+        .distinct()
+        .order_by(FactTimesheet.week_id.desc())
+        .limit(5)
+        .all()
+    )
+    week_ids = [r.week_id for r in recent_weeks]
+    if not week_ids:
+        return {"week_id": None, "week_end": None, "total_hours": 0.0, "total_resources": 0, "resources": []}
+
+    last_week_id = week_ids[0]
+    prior_4_ids = week_ids[1:5]  # fino a 4 settimane precedenti
+
+    dim_w = db.get(DimWeek, last_week_id)
+    week_end = dim_w.week_end.isoformat() if (dim_w and dim_w.week_end) else None
+
+    # Dati ultima settimana per risorsa + progetto
+    lw_rows = (
+        db.query(
+            FactTimesheet.resource_id,
+            FactTimesheet.project_id,
+            func.coalesce(DimCostCenter.bu, "—").label("bu"),
+            func.sum(FactTimesheet.hours_actual).label("hours"),
+            func.sum(FactTimesheet.net_revenue_actual).label("nr"),
+        )
+        .outerjoin(DimCostCenter, FactTimesheet.resource_cost_center == DimCostCenter.cc_code)
+        .filter(FactTimesheet.is_stale == 0, FactTimesheet.week_id == last_week_id)
+        .group_by(FactTimesheet.resource_id, FactTimesheet.project_id, DimCostCenter.bu)
+        .all()
+    )
+
+    # Media 4 settimane precedenti per risorsa (ore totali / 4 settimane, 0 se assente)
+    prior_map: dict[str, float] = {}
+    if prior_4_ids:
+        prior_rows = (
+            db.query(
+                FactTimesheet.resource_id,
+                func.sum(FactTimesheet.hours_actual).label("hours"),
+            )
+            .filter(FactTimesheet.is_stale == 0, FactTimesheet.week_id.in_(prior_4_ids))
+            .group_by(FactTimesheet.resource_id)
+            .all()
+        )
+        for r in prior_rows:
+            # Dividiamo sempre per 4 (settimane senza dati contano come 0)
+            prior_map[r.resource_id] = float(r.hours or 0) / len(prior_4_ids)
+
+    # Lookup titoli progetto
+    all_project_ids = list({r.project_id for r in lw_rows})
+    project_titles: dict[str, str | None] = {}
+    if all_project_ids:
+        fp_rows = db.query(FactProject.project_id, FactProject.project_title).filter(
+            FactProject.project_id.in_(all_project_ids)
+        ).all()
+        project_titles = {r.project_id: r.project_title for r in fp_rows}
+
+    # Aggrega per risorsa
+    res_map: dict[str, dict] = {}
+    for row in lw_rows:
+        rid = row.resource_id
+        if rid not in res_map:
+            dim_res = db.get(DimResource, rid)
+            res_map[rid] = {
+                "resource_id": rid,
+                "resource_name": (dim_res.resource_name if dim_res else None) or rid,
+                "bu": row.bu,
+                "hours_last_week": 0.0,
+                "projects": [],
+            }
+        res_map[rid]["hours_last_week"] += float(row.hours or 0)
+        res_map[rid]["projects"].append({
+            "project_id": row.project_id,
+            "project_title": project_titles.get(row.project_id),
+            "hours": round(float(row.hours or 0), 1),
+        })
+
+    # Calcola flag anomalia e costruisce risposta
+    resources = []
+    for rid, r in res_map.items():
+        avg_4w = prior_map.get(rid)
+        hours_lw = r["hours_last_week"]
+
+        if avg_4w is None or avg_4w < 2.0:
+            flag = "new"
+            deviation_pct = None
+        else:
+            deviation_pct = round((hours_lw - avg_4w) / avg_4w * 100, 1)
+            if deviation_pct > 25:
+                flag = "high"
+            elif deviation_pct < -25:
+                flag = "low"
+            else:
+                flag = "normal"
+
+        resources.append({
+            "resource_id": rid,
+            "resource_name": r["resource_name"],
+            "bu": r["bu"],
+            "hours_last_week": round(hours_lw, 1),
+            "avg_4w_hours": round(avg_4w, 1) if avg_4w is not None else None,
+            "deviation_pct": deviation_pct,
+            "flag": flag,
+            "projects": sorted(r["projects"], key=lambda x: x["hours"], reverse=True),
+        })
+
+    resources.sort(key=lambda x: x["hours_last_week"], reverse=True)
+
+    return {
+        "week_id": last_week_id,
+        "week_end": week_end,
+        "total_hours": round(sum(r["hours_last_week"] for r in resources), 1),
+        "total_resources": len(resources),
+        "resources": resources,
     }
