@@ -1,6 +1,6 @@
 # PCFM — Project Code Forecast Manager · Stato progetto per handoff
 
-**Data aggiornamento:** 2026-05-11 (wp12d)  
+**Data aggiornamento:** 2026-05-11 (wp12e)  
 **Stack:** FastAPI + SQLAlchemy + SQLite · React 18 + Vite + TailwindCSS · Python 3.10 · monorepo
 
 ---
@@ -135,6 +135,22 @@ POST /api/import/confirm          → importa file (auto-detect tipo 8 o 9)
 **Nota giroconti (da investigare):**
 - Se alcuni clienti mostrano NR timesheet gonfiato rispetto alle aspettative, potrebbe essere dovuto a reclassifiche interne (giroconti)
 - Possibile filtro futuro: escludere righe con BU/OU/LOS specifici che identificano movimenti interni
+
+## wp12e — Tab Risorse/FTE + Preview settimanale (completata 2026-05-11)
+
+**Nuovo endpoint `/api/dashboard/resources`:**
+- FTE per risorsa nel FY = ore_totali / settimane_attive / 40
+- Per ogni progetto: FTE, pct_of_time, gg/mese (FTE×20)
+
+**Tab "Risorse / FTE":**
+- Tabella espandibile per risorsa: FTE · gg/mese · distribuzione barra segmentata progetti
+- Dettaglio per codice: FTE su quel progetto, gg/mese, % del tempo
+
+**Preview settimanale in previsioning:**
+- Riga espandibile: grigio=storico ultime 6 sett, blu=proiettato fino al 30/6
+
+**Widget ultima settimana:**
+- Aggiunta colonna FTE stimato (avg_4w/40) per contestualizzare i flag anomalia
 
 ## Schermata Projects — DA FARE (prossimo obiettivo)
 
