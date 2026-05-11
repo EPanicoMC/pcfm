@@ -443,6 +443,9 @@ def fy_forecast(
         nr_actual = float(p.net_revenue_act) if p.net_revenue_act else ts_all["nr"]
         hours_actual = float(p.hours_actual) if p.hours_actual else ts_all["hours"]
 
+        # weekly: usato sia per run rate che per storico settimanale per cliente
+        weekly = weekly_by_proj.get(p.project_id, [])
+
         # Residuo e run rate: solo per codici aperti (quelli "In Chiusura" non hanno
         # budget prelevabile e non genereranno NR futuro)
         if is_closed:
@@ -453,7 +456,6 @@ def fy_forecast(
         else:
             residuo_nr = (iow_nr - nr_actual) if iow_nr else 0.0
             residuo_ore = (iow_hours - hours_actual) if iow_hours else None
-            weekly = weekly_by_proj.get(p.project_id, [])
             last4 = weekly[:4]
             rr_nr = sum(w[1] for w in last4) / len(last4) if last4 else 0.0
             rr_hours = sum(w[2] for w in last4) / len(last4) if last4 else 0.0
@@ -472,6 +474,7 @@ def fy_forecast(
                 "available_budget_hours": 0.0,   # solo da progetti con dati IOW ore
                 "_has_hours_data": False,
                 "_bu_weighted": {},
+                "_weekly": {},  # week_id → {nr, hours} per storico FY corrente
             }
         c = by_client[cn]
         c["ts_nr_ytd"] += ts_fy["nr"]
@@ -487,6 +490,12 @@ def fy_forecast(
         for bu, pct in bu_mix.items():
             c["_bu_weighted"].setdefault(bu, 0.0)
             c["_bu_weighted"][bu] += rr_nr * pct
+
+        # Storico settimanale per cliente (inclusi codici chiusi — storico reale)
+        for wid, w_nr, w_hours in weekly:
+            c["_weekly"].setdefault(wid, {"nr": 0.0, "hours": 0.0})
+            c["_weekly"][wid]["nr"] += w_nr
+            c["_weekly"][wid]["hours"] += w_hours
 
     # ── Calcola previsione e semaforo per ogni cliente ─────────────────────────
     clients_result = []
@@ -571,6 +580,11 @@ def fy_forecast(
             "exhaustion_type": exhaustion_type,
             "coverage_status": status,
             "by_bu_forecast": by_bu_forecast,
+            # Storico settimanale FY corrente (per preview base previsione + proiezione UI)
+            "actual_weeks_fy": [
+                {"week_id": wid, "nr": round(d["nr"], 2), "hours": round(d["hours"], 1)}
+                for wid, d in sorted(c["_weekly"].items(), reverse=True)[:16]
+            ],
         })
 
     clients_result.sort(key=lambda x: x["projected_total_nr"], reverse=True)
@@ -732,4 +746,128 @@ def last_week_summary(db: Session = Depends(get_db)):
         "total_hours": round(sum(r["hours_last_week"] for r in resources), 1),
         "total_resources": len(resources),
         "resources": resources,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /api/dashboard/resources  — FTE per risorsa nel FY, con breakdown per progetto
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/resources")
+def resources_fte(
+    fy: int | None = Query(None, description="FY (default: corrente)"),
+    db: Session = Depends(get_db),
+):
+    """
+    FTE per risorsa nel FY selezionato, con breakdown per progetto.
+    FTE = ore_totali / settimane_attive / 40 (settimane lavorative standard).
+    Per ogni progetto: FTE e % del tempo della risorsa su quel progetto.
+    """
+    today = date.today()
+    current_fy = fy or _current_fy(today)
+
+    # Ore per risorsa×progetto×BU nel FY
+    rp_rows = (
+        db.query(
+            FactTimesheet.resource_id,
+            FactTimesheet.project_id,
+            func.coalesce(DimCostCenter.bu, "—").label("bu"),
+            func.sum(FactTimesheet.hours_actual).label("hours"),
+            func.sum(FactTimesheet.net_revenue_actual).label("nr"),
+        )
+        .outerjoin(DimCostCenter, FactTimesheet.resource_cost_center == DimCostCenter.cc_code)
+        .filter(FactTimesheet.is_stale == 0, FactTimesheet.fy == current_fy)
+        .group_by(FactTimesheet.resource_id, FactTimesheet.project_id, DimCostCenter.bu)
+        .all()
+    )
+
+    # Settimane attive per risorsa nel FY (per normalizzare FTE)
+    active_weeks_rows = (
+        db.query(
+            FactTimesheet.resource_id,
+            func.count(func.distinct(FactTimesheet.week_id)).label("active_weeks"),
+        )
+        .filter(FactTimesheet.is_stale == 0, FactTimesheet.fy == current_fy)
+        .group_by(FactTimesheet.resource_id)
+        .all()
+    )
+    active_weeks_map = {r.resource_id: int(r.active_weeks) for r in active_weeks_rows}
+
+    # Lookup titoli progetto
+    project_ids = list({r.project_id for r in rp_rows})
+    project_map: dict[str, str | None] = {}
+    if project_ids:
+        for fp in db.query(FactProject.project_id, FactProject.project_title).filter(
+            FactProject.project_id.in_(project_ids)
+        ).all():
+            project_map[fp.project_id] = fp.project_title
+
+    # Aggrega per risorsa
+    res_data: dict[str, dict] = {}
+    for row in rp_rows:
+        rid = row.resource_id
+        if rid not in res_data:
+            dim_res = db.get(DimResource, rid)
+            res_data[rid] = {
+                "resource_id": rid,
+                "resource_name": (dim_res.resource_name if dim_res else None) or rid,
+                "bu": row.bu,
+                "total_hours": 0.0,
+                "total_nr": 0.0,
+                "projects": [],
+            }
+        res_data[rid]["total_hours"] += float(row.hours or 0)
+        res_data[rid]["total_nr"] += float(row.nr or 0)
+        res_data[rid]["projects"].append({
+            "project_id": row.project_id,
+            "project_title": project_map.get(row.project_id),
+            "hours": float(row.hours or 0),
+            "nr": float(row.nr or 0),
+        })
+
+    # Calcola FTE e percentuali
+    result_resources = []
+    for rid, r in res_data.items():
+        active_weeks = active_weeks_map.get(rid, 1)
+        total_hours = r["total_hours"]
+        # FTE = ore medie settimanali / 40h standard
+        fte_total = (total_hours / active_weeks / 40.0) if active_weeks > 0 else 0.0
+
+        projects = sorted(
+            [
+                {
+                    "project_id": p["project_id"],
+                    "project_title": p["project_title"],
+                    "hours": round(p["hours"], 1),
+                    "nr": round(p["nr"], 2),
+                    # FTE su questo progetto = stessa base (settimane attive totali)
+                    "fte": round(p["hours"] / active_weeks / 40.0, 2) if active_weeks > 0 else 0.0,
+                    "pct_of_time": round(p["hours"] / total_hours * 100, 1) if total_hours > 0 else 0.0,
+                }
+                for p in r["projects"]
+            ],
+            key=lambda x: x["hours"],
+            reverse=True,
+        )
+
+        result_resources.append({
+            "resource_id": rid,
+            "resource_name": r["resource_name"],
+            "bu": r["bu"],
+            "total_hours": round(total_hours, 1),
+            "total_nr": round(r["total_nr"], 2),
+            "active_weeks": active_weeks,
+            "fte": round(fte_total, 2),
+            # Giorni/mese stima: FTE × 20 giorni lavorativi/mese
+            "days_per_month": round(fte_total * 20, 1),
+            "projects": projects,
+        })
+
+    result_resources.sort(key=lambda x: x["total_hours"], reverse=True)
+
+    return {
+        "fy": current_fy,
+        "total_resources": len(result_resources),
+        "total_hours": round(sum(r["total_hours"] for r in result_resources), 1),
+        "resources": result_resources,
     }

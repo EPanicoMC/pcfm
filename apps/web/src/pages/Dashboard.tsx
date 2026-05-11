@@ -13,6 +13,7 @@ import {
   DashboardFyBreakdown,
   DashboardFyForecastClient,
   LastWeekResource,
+  ResourceFte,
 } from '../api/client'
 
 // ── Formattatori ─────────────────────────────────────────────────────────────
@@ -201,12 +202,13 @@ function BuBreakdown({ data }: { data: DashboardBuBreakdown[] }) {
 
 // ── Tab selector ──────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'previsioning'
+type Tab = 'overview' | 'previsioning' | 'risorse'
 
 function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'previsioning', label: 'Previsioning FY' },
+    { id: 'risorse', label: 'Risorse / FTE' },
   ]
   return (
     <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
@@ -229,11 +231,42 @@ function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
 
 // ── Riga forecast cliente (espandibile) ───────────────────────────────────────
 
-function ForecastClientRow({ c, isLast }: { c: DashboardFyForecastClient; isLast: boolean; weeksRemaining: number }) {
+// Genera le settimane future dal prossimo lunedì fino alla fine FY
+function buildFutureWeeks(fyEndStr: string, runRateNr: number) {
+  const fyEnd = new Date(fyEndStr)
+  const today = new Date()
+  // Trova il prossimo lunedì
+  const dow = today.getDay()
+  const daysToNextMon = dow === 0 ? 1 : dow === 1 ? 7 : 8 - dow
+  const start = new Date(today)
+  start.setDate(today.getDate() + daysToNextMon)
+
+  const weeks: { week_id: string; label: string; nr: number }[] = []
+  const cur = new Date(start)
+  while (cur <= fyEnd && weeks.length < 12) {
+    const fri = new Date(cur)
+    fri.setDate(cur.getDate() + 4)
+    weeks.push({
+      week_id: cur.toISOString().split('T')[0],
+      label: fri.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }),
+      nr: runRateNr,
+    })
+    cur.setDate(cur.getDate() + 7)
+  }
+  return weeks
+}
+
+function ForecastClientRow({
+  c, isLast, fyEnd,
+}: {
+  c: DashboardFyForecastClient
+  isLast: boolean
+  weeksRemaining: number
+  fyEnd: string
+}) {
   const [expanded, setExpanded] = useState(false)
   const borderBottom = isLast ? '' : 'border-b border-slate-100'
 
-  // Data saturazione formattata
   const satDate = c.saturation_date
     ? new Date(c.saturation_date).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
     : null
@@ -245,6 +278,14 @@ function ForecastClientRow({ c, isLast }: { c: DashboardFyForecastClient; isLast
     nr: 'budget NR esaurito',
     ok: '',
   }
+
+  // Settimane future proiettate
+  const futureWeeks = expanded && c.run_rate_weekly_nr > 0
+    ? buildFutureWeeks(fyEnd, c.run_rate_weekly_nr)
+    : []
+
+  // Ultime 6 settimane storiche (base run rate)
+  const historicalWeeks = c.actual_weeks_fy?.slice(0, 6) ?? []
 
   return (
     <>
@@ -294,24 +335,75 @@ function ForecastClientRow({ c, isLast }: { c: DashboardFyForecastClient; isLast
           )}
         </td>
       </tr>
-      {expanded && c.by_bu_forecast.length > 0 && (
+
+      {expanded && (
         <tr>
-          <td colSpan={7} className={`bg-slate-50 px-8 py-3 ${borderBottom}`}>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Breakdown BU previsto</p>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-1.5">
-              {c.by_bu_forecast.map((bu) => (
-                <div key={bu.bu} className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <div className="flex justify-between text-xs mb-0.5">
-                      <span className="font-medium text-slate-700">{bu.bu}</span>
-                      <span className="text-slate-500">{fmtEur(bu.forecasted_nr, true)} · {bu.pct_of_forecast.toFixed(1)}%</span>
-                    </div>
-                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-400 rounded-full" style={{ width: `${bu.pct_of_forecast}%` }} />
-                    </div>
+          <td colSpan={7} className={`bg-slate-50 px-8 py-4 ${borderBottom}`}>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+              {/* BU breakdown */}
+              {c.by_bu_forecast.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Breakdown BU previsto</p>
+                  <div className="space-y-1.5">
+                    {c.by_bu_forecast.map((bu) => (
+                      <div key={bu.bu}>
+                        <div className="flex justify-between text-xs mb-0.5">
+                          <span className="font-medium text-slate-700">{bu.bu}</span>
+                          <span className="text-slate-500">{fmtEur(bu.forecasted_nr, true)} · {bu.pct_of_forecast.toFixed(1)}%</span>
+                        </div>
+                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div className="h-full bg-blue-400 rounded-full" style={{ width: `${bu.pct_of_forecast}%` }} />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
+              )}
+
+              {/* Piano settimane: storico + proiezione */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                  Piano settimanale
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {/* Settimane storiche (ultime 6, dal più vecchio) */}
+                  {[...historicalWeeks].reverse().map((w) => {
+                    const label = w.week_id
+                      ? new Date(w.week_id).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
+                      : w.week_id
+                    return (
+                      <div key={`h-${w.week_id}`}
+                        className="bg-slate-200 rounded px-2 py-1 text-center min-w-[60px]"
+                        title={`Settimana ${w.week_id}`}
+                      >
+                        <p className="text-xs text-slate-500">{label}</p>
+                        <p className="text-xs font-semibold text-slate-700">{fmtEur(w.nr, true)}</p>
+                      </div>
+                    )
+                  })}
+                  {/* Separatore oggi */}
+                  <div className="flex items-center px-1">
+                    <div className="w-px h-8 bg-blue-400" />
+                    <span className="text-xs text-blue-500 ml-0.5 -mt-1">oggi</span>
+                  </div>
+                  {/* Settimane future proiettate */}
+                  {futureWeeks.map((w) => (
+                    <div key={`f-${w.week_id}`}
+                      className="bg-blue-50 border border-blue-200 rounded px-2 py-1 text-center min-w-[60px]"
+                    >
+                      <p className="text-xs text-blue-400">{w.label}</p>
+                      <p className="text-xs font-semibold text-blue-700">{fmtEur(w.nr, true)}</p>
+                    </div>
+                  ))}
+                  {futureWeeks.length === 0 && c.run_rate_weekly_nr === 0 && (
+                    <p className="text-xs text-slate-400 italic">Nessuna attività prevista (run rate = 0)</p>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 mt-1.5">
+                  Grigio = storico · Blu = proiettato ({fmtEur(c.run_rate_weekly_nr, true)}/sett)
+                </p>
+              </div>
             </div>
           </td>
         </tr>
@@ -383,13 +475,16 @@ function LastWeekWidget() {
                 <th className="text-left px-4 py-2 font-medium">BU</th>
                 <th className="text-right px-4 py-2 font-medium">Ore sett.</th>
                 <th className="text-right px-4 py-2 font-medium">Media 4w</th>
-                <th className="text-center px-4 py-2 font-medium">Δ</th>
+                <th className="text-right px-4 py-2 font-medium">FTE stim.</th>
+                <th className="text-center px-4 py-2 font-medium">Δ vs media</th>
                 <th className="text-left px-4 py-2 font-medium">Progetti</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {displayResources.map((r) => {
                 const isAnomaly = r.flag === 'high' || r.flag === 'low'
+                // FTE stimato dalla media 4w (avg_4w / 40h settimanali standard)
+                const fte = r.avg_4w_hours != null ? (r.avg_4w_hours / 40) : null
                 return (
                   <tr key={r.resource_id} className={isAnomaly ? 'bg-red-50/40' : 'hover:bg-slate-50'}>
                     <td className="px-4 py-2 font-medium text-slate-700">{r.resource_name}</td>
@@ -399,6 +494,9 @@ function LastWeekWidget() {
                     </td>
                     <td className="px-4 py-2 text-right text-slate-400">
                       {r.avg_4w_hours != null ? `${fmtN(r.avg_4w_hours, 1)}h` : '—'}
+                    </td>
+                    <td className="px-4 py-2 text-right text-slate-500">
+                      {fte != null ? `${fte.toFixed(2)}` : '—'}
                     </td>
                     <td className="px-4 py-2 text-center">
                       <FlagBadge flag={r.flag} dev={r.deviation_pct} />
@@ -534,7 +632,13 @@ function PrevisioningTab() {
               </tr>
             )}
             {clients.map((c, i) => (
-              <ForecastClientRow key={c.client_name} c={c} isLast={i === clients.length - 1} weeksRemaining={weeks_remaining} />
+              <ForecastClientRow
+                key={c.client_name}
+                c={c}
+                isLast={i === clients.length - 1}
+                weeksRemaining={weeks_remaining}
+                fyEnd={fy_end}
+              />
             ))}
           </tbody>
           {clients.length > 1 && (
@@ -556,6 +660,173 @@ function PrevisioningTab() {
           )}
         </table>
       </div>
+    </div>
+  )
+}
+
+// ── Tab Risorse / FTE ─────────────────────────────────────────────────────────
+
+// Palette colori per distribuzione progetti (max 5 barre)
+const PROJECT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444']
+
+function ResourceRow({ r }: { r: ResourceFte }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <>
+      <tr
+        className="hover:bg-slate-50 cursor-pointer border-b border-slate-100"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <td className="px-4 py-2.5">
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 text-xs w-3">{expanded ? '▾' : '▸'}</span>
+            <span className="font-medium text-slate-800 text-sm">{r.resource_name}</span>
+          </div>
+        </td>
+        <td className="px-4 py-2.5 text-xs text-slate-500">{r.bu}</td>
+        <td className="px-4 py-2.5 text-right text-sm text-slate-700 font-medium">{fmtN(r.total_hours, 0)}h</td>
+        <td className="px-4 py-2.5 text-right text-xs text-slate-500">{r.active_weeks} sett.</td>
+        <td className="px-4 py-2.5 text-right">
+          <span className={`text-sm font-bold ${r.fte >= 0.8 ? 'text-green-700' : r.fte >= 0.5 ? 'text-amber-600' : 'text-slate-500'}`}>
+            {r.fte.toFixed(2)}
+          </span>
+          <span className="text-xs text-slate-400 ml-0.5">FTE</span>
+        </td>
+        <td className="px-4 py-2.5 text-right text-sm text-slate-600">{r.days_per_month.toFixed(1)} gg</td>
+        <td className="px-4 py-2.5">
+          {/* Barra distribuzione progetto segmentata */}
+          <div className="flex h-3 rounded overflow-hidden w-32 gap-px">
+            {r.projects.slice(0, 5).map((p, i) => (
+              <div
+                key={p.project_id}
+                style={{ width: `${p.pct_of_time}%`, backgroundColor: PROJECT_COLORS[i] }}
+                title={`${p.project_id}: ${p.pct_of_time.toFixed(0)}%`}
+              />
+            ))}
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5 truncate max-w-[160px]">
+            {r.projects.slice(0, 2).map((p) =>
+              `${p.project_id.slice(-12)} ${p.pct_of_time.toFixed(0)}%`
+            ).join(' · ')}
+            {r.projects.length > 2 && ` +${r.projects.length - 2}`}
+          </p>
+        </td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td colSpan={7} className="bg-slate-50 border-b border-slate-100 px-8 py-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+              Dettaglio per progetto · FTE calcolato su {r.active_weeks} settimane attive
+            </p>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-slate-400 text-left">
+                  <th className="pb-1 font-medium">Codice</th>
+                  <th className="pb-1 font-medium">Titolo</th>
+                  <th className="pb-1 font-medium text-right">Ore</th>
+                  <th className="pb-1 font-medium text-right">FTE su cod.</th>
+                  <th className="pb-1 font-medium text-right">Gg/mese</th>
+                  <th className="pb-1 font-medium text-right">% tempo</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {r.projects.map((p, i) => (
+                  <tr key={p.project_id}>
+                    <td className="py-1.5">
+                      <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle"
+                        style={{ backgroundColor: PROJECT_COLORS[i] ?? '#94a3b8' }} />
+                      <span className="font-mono text-slate-700">{p.project_id}</span>
+                    </td>
+                    <td className="py-1.5 text-slate-500 max-w-[200px] truncate">{p.project_title ?? '—'}</td>
+                    <td className="py-1.5 text-right font-medium text-slate-700">{fmtN(p.hours, 1)}h</td>
+                    <td className="py-1.5 text-right font-bold text-blue-700">{p.fte.toFixed(2)}</td>
+                    <td className="py-1.5 text-right text-slate-600">{(p.fte * 20).toFixed(1)} gg</td>
+                    <td className="py-1.5 text-right text-slate-500">{p.pct_of_time.toFixed(1)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+function ResourceFteTab() {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['dashboard-resources'],
+    queryFn: () => api.resources(),
+  })
+
+  if (isLoading) return <div className="p-8 text-slate-500">Calcolo FTE...</div>
+  if (error) return <div className="p-8 text-red-600">Errore: {(error as Error).message}</div>
+  if (!data) return null
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">
+            Risorse / FTE — FY{String(data.fy).slice(2)}
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            FTE = media ore settimanali ÷ 40h · Gg/mese = FTE × 20 giorni lavorativi
+          </p>
+        </div>
+        <div className="flex gap-4">
+          <div className="text-center">
+            <p className="text-xs text-slate-400">Risorse</p>
+            <p className="text-xl font-bold text-slate-800">{data.total_resources}</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-slate-400">Ore totali FY</p>
+            <p className="text-xl font-bold text-slate-800">{fmtN(data.total_hours, 0)}</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-slate-400">FTE medio</p>
+            <p className="text-xl font-bold text-slate-800">
+              {data.resources.length > 0
+                ? (data.resources.reduce((s, r) => s + r.fte, 0) / data.resources.length).toFixed(2)
+                : '—'}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabella risorse */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-400 uppercase tracking-wide">
+              <th className="text-left px-4 py-3 font-medium">Risorsa</th>
+              <th className="text-left px-4 py-3 font-medium">BU</th>
+              <th className="text-right px-4 py-3 font-medium">Ore FY</th>
+              <th className="text-right px-4 py-3 font-medium">Sett. att.</th>
+              <th className="text-right px-4 py-3 font-medium">FTE</th>
+              <th className="text-right px-4 py-3 font-medium">Gg/mese</th>
+              <th className="px-4 py-3 font-medium">Distribuzione</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.resources.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                  Nessun dato per FY{String(data.fy).slice(2)}.
+                </td>
+              </tr>
+            )}
+            {data.resources.map((r) => (
+              <ResourceRow key={r.resource_id} r={r} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-slate-400 text-center">
+        FTE calcolato su settimane con almeno un caricamento nel FY · Espandi una risorsa per vedere il dettaglio per codice progetto
+      </p>
     </div>
   )
 }
@@ -948,6 +1219,9 @@ export default function Dashboard() {
 
       {/* ════════════════════════ TAB PREVISIONING ════════════════════════ */}
       {activeTab === 'previsioning' && <PrevisioningTab />}
+
+      {/* ════════════════════════ TAB RISORSE ════════════════════════ */}
+      {activeTab === 'risorse' && <ResourceFteTab />}
     </div>
   )
 }

@@ -177,6 +177,7 @@ export interface DashboardFyForecastClient {
   exhaustion_type: 'hours' | 'nr' | 'ok'
   coverage_status: 'green' | 'amber' | 'red' | 'grey'
   by_bu_forecast: DashboardFyForecastBu[]
+  actual_weeks_fy: { week_id: string; nr: number; hours: number }[]
 }
 
 export interface DashboardFyForecast {
@@ -362,6 +363,36 @@ export interface ImportRecord {
   backup_path: string | null
 }
 
+// ── Risorse FTE ───────────────────────────────────────────────────────────────
+
+export interface ResourceFteProject {
+  project_id: string
+  project_title: string | null
+  hours: number
+  nr: number
+  fte: number
+  pct_of_time: number
+}
+
+export interface ResourceFte {
+  resource_id: string
+  resource_name: string
+  bu: string
+  total_hours: number
+  total_nr: number
+  active_weeks: number
+  fte: number
+  days_per_month: number
+  projects: ResourceFteProject[]
+}
+
+export interface ResourceFteSummary {
+  fy: number
+  total_resources: number
+  total_hours: number
+  resources: ResourceFte[]
+}
+
 // ── Last week loadings ─────────────────────────────────────────────────────────
 
 export interface LastWeekProject {
@@ -454,4 +485,7 @@ export const api = {
   },
 
   lastWeek: () => req<LastWeekSummary>('/dashboard/last-week'),
+
+  resources: (fy?: number) =>
+    req<ResourceFteSummary>(`/dashboard/resources${fy ? `?fy=${fy}` : ''}`),
 }
