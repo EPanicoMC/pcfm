@@ -171,6 +171,10 @@ export interface DashboardFyForecastClient {
   projected_additional_nr: number
   projected_total_nr: number
   available_budget: number
+  available_budget_hours: number
+  weeks_to_exhaustion: number | null
+  saturation_date: string | null
+  exhaustion_type: 'hours' | 'nr' | 'ok'
   coverage_status: 'green' | 'amber' | 'red' | 'grey'
   by_bu_forecast: DashboardFyForecastBu[]
 }

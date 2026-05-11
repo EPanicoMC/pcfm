@@ -435,9 +435,12 @@ def fy_forecast(
         ts_all = ts_total_map.get(p.project_id, {"nr": 0.0, "hours": 0.0})
         ts_fy = ts_fy_map.get(p.project_id, {"nr": 0.0, "hours": 0.0})
         iow_nr = float(p.iow_net_revenue or 0)
+        iow_hours = float(p.iow_hours_total or 0)
 
-        # Residuo budget (IOW - tutto il NR consumato, all-time)
-        residuo = (iow_nr - ts_all["nr"]) if iow_nr else 0.0
+        # Residuo NR (IOW NR - NR consumato all-time)
+        residuo_nr = (iow_nr - ts_all["nr"]) if iow_nr else 0.0
+        # Residuo ore (IOW hours - ore consumate all-time) — None se dati File9 assenti
+        residuo_ore = (iow_hours - ts_all["hours"]) if iow_hours else None
 
         # Run rate settimanale: media ultime 4 settimane del FY corrente
         weekly = weekly_by_proj.get(p.project_id, [])
@@ -455,15 +458,20 @@ def fy_forecast(
                 "ts_hours_ytd": 0.0,
                 "run_rate_weekly_nr": 0.0,
                 "run_rate_weekly_hours": 0.0,
-                "available_budget": 0.0,
-                "_bu_weighted": {},  # bu → weighted NR sum (for mix calc)
+                "available_budget_nr": 0.0,
+                "available_budget_hours": 0.0,   # solo da progetti con dati IOW ore
+                "_has_hours_data": False,
+                "_bu_weighted": {},
             }
         c = by_client[cn]
         c["ts_nr_ytd"] += ts_fy["nr"]
         c["ts_hours_ytd"] += ts_fy["hours"]
         c["run_rate_weekly_nr"] += rr_nr
         c["run_rate_weekly_hours"] += rr_hours
-        c["available_budget"] += residuo
+        c["available_budget_nr"] += residuo_nr
+        if residuo_ore is not None:
+            c["available_budget_hours"] += residuo_ore
+            c["_has_hours_data"] = True
 
         # BU mix pesata per run rate (contribuzione proporzionale al ritmo del progetto)
         for bu, pct in bu_mix.items():
@@ -474,22 +482,53 @@ def fy_forecast(
     clients_result = []
     total_ts_ytd = 0.0
     total_additional = 0.0
-    total_available = 0.0
+    total_available_nr = 0.0
+
+    INF = float("inf")
 
     for cn, c in by_client.items():
-        projected_additional = c["run_rate_weekly_nr"] * weeks_remaining
-        projected_total = c["ts_nr_ytd"] + projected_additional
-        available = c["available_budget"]
+        rr_nr = c["run_rate_weekly_nr"]
+        rr_hours = c["run_rate_weekly_hours"]
+        available_nr = c["available_budget_nr"]
+        available_hours = c["available_budget_hours"]
+        has_hours = c["_has_hours_data"]
 
-        # Semaforo copertura budget
-        if c["run_rate_weekly_nr"] == 0:
-            status = "grey"   # nessuna produzione attiva, impossibile prevedere
-        elif available <= 0:
-            status = "red"    # nessun budget residuo
-        elif available < projected_additional * 0.85:
-            status = "amber"  # budget insufficiente a coprire il previsto
+        projected_additional = rr_nr * weeks_remaining
+        projected_total = c["ts_nr_ytd"] + projected_additional
+
+        # ── Settimane di copertura: il vincolo più restrittivo tra NR e ore ──
+        # La logica corretta: quante settimane possiamo lavorare al ritmo attuale?
+        weeks_nr = (available_nr / rr_nr) if rr_nr > 0 else INF
+        weeks_hours = (available_hours / rr_hours) if (has_hours and rr_hours > 0) else INF
+        weeks_coverage = min(weeks_nr, weeks_hours)
+
+        # Tipo di vincolo che esaurisce prima
+        if weeks_coverage == INF:
+            exhaustion_type = "ok"
+        elif weeks_hours <= weeks_nr:
+            exhaustion_type = "hours"
         else:
-            status = "green"  # copertura ok
+            exhaustion_type = "nr"
+
+        # Data stimata di saturazione (oggi + weeks_coverage × 7 giorni)
+        if weeks_coverage < INF and weeks_coverage < weeks_remaining * 3:
+            sat_delta = int(weeks_coverage * 7)
+            saturation_date = (today + __import__("datetime").timedelta(days=sat_delta)).isoformat()
+        else:
+            saturation_date = None
+
+        # ── Semaforo ──
+        # Soglie: AMBER se il budget copre < 95% del FY rimanente (≥ 3 giorni scoperti)
+        if rr_nr == 0:
+            status = "grey"
+        elif available_nr <= 0 or (has_hours and available_hours <= 0):
+            status = "red"
+        elif weeks_coverage < weeks_remaining * 0.95:
+            # Budget si esaurisce almeno 3-4 giorni prima del 30 giugno
+            deficit_weeks = weeks_remaining - weeks_coverage
+            status = "red" if deficit_weeks > 2 else "amber"
+        else:
+            status = "green"
 
         # Breakdown BU della produzione prevista (usa mix del FY corrente)
         bu_total = sum(c["_bu_weighted"].values())
@@ -504,32 +543,39 @@ def fy_forecast(
 
         total_ts_ytd += c["ts_nr_ytd"]
         total_additional += projected_additional
-        total_available += available
+        total_available_nr += available_nr
 
         clients_result.append({
             "client_name": cn,
             "client_group": c["client_group"],
             "ts_nr_ytd": round(c["ts_nr_ytd"], 2),
             "ts_hours_ytd": round(c["ts_hours_ytd"], 1),
-            "run_rate_weekly_nr": round(c["run_rate_weekly_nr"], 2),
-            "run_rate_weekly_hours": round(c["run_rate_weekly_hours"], 2),
+            "run_rate_weekly_nr": round(rr_nr, 2),
+            "run_rate_weekly_hours": round(rr_hours, 2),
             "projected_additional_nr": round(projected_additional, 2),
             "projected_total_nr": round(projected_total, 2),
-            "available_budget": round(available, 2),
+            "available_budget": round(available_nr, 2),
+            "available_budget_hours": round(available_hours, 1),
+            "weeks_to_exhaustion": round(weeks_coverage, 1) if weeks_coverage < INF else None,
+            "saturation_date": saturation_date,
+            "exhaustion_type": exhaustion_type,
             "coverage_status": status,
             "by_bu_forecast": by_bu_forecast,
         })
 
     clients_result.sort(key=lambda x: x["projected_total_nr"], reverse=True)
 
-    # Semaforo globale
+    # ── Semaforo globale ──
     global_additional = total_additional
+    # Settimane di copertura NR globale (le ore non si sommano significativamente)
+    global_weeks = (total_available_nr / (global_additional / weeks_remaining)) if (global_additional > 0 and weeks_remaining > 0) else INF
     if global_additional == 0:
         global_status = "grey"
-    elif total_available <= 0:
+    elif total_available_nr <= 0:
         global_status = "red"
-    elif total_available < global_additional * 0.85:
-        global_status = "amber"
+    elif global_weeks < weeks_remaining * 0.95:
+        deficit = weeks_remaining - global_weeks
+        global_status = "red" if deficit > 2 else "amber"
     else:
         global_status = "green"
 
@@ -543,7 +589,7 @@ def fy_forecast(
             "ts_nr_ytd": round(total_ts_ytd, 2),
             "projected_additional_nr": round(global_additional, 2),
             "projected_total_nr": round(total_ts_ytd + global_additional, 2),
-            "available_budget": round(total_available, 2),
+            "available_budget": round(total_available_nr, 2),
             "coverage_status": global_status,
         },
         "clients": clients_result,

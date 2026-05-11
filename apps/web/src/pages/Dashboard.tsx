@@ -228,9 +228,22 @@ function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
 
 // ── Riga forecast cliente (espandibile) ───────────────────────────────────────
 
-function ForecastClientRow({ c, isLast }: { c: DashboardFyForecastClient; isLast: boolean }) {
+function ForecastClientRow({ c, isLast }: { c: DashboardFyForecastClient; isLast: boolean; weeksRemaining: number }) {
   const [expanded, setExpanded] = useState(false)
   const borderBottom = isLast ? '' : 'border-b border-slate-100'
+
+  // Data saturazione formattata
+  const satDate = c.saturation_date
+    ? new Date(c.saturation_date).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
+    : null
+  const coverageLabel = c.weeks_to_exhaustion != null
+    ? `${c.weeks_to_exhaustion.toFixed(1)} sett${satDate ? ` (fino al ${satDate})` : ''}`
+    : null
+  const exhaustionLabel: Record<string, string> = {
+    hours: 'ore esaurite',
+    nr: 'budget NR esaurito',
+    ok: '',
+  }
 
   return (
     <>
@@ -264,9 +277,20 @@ function ForecastClientRow({ c, isLast }: { c: DashboardFyForecastClient; isLast
           <p className={`text-sm font-semibold ${c.available_budget < 0 ? 'text-red-600' : 'text-slate-700'}`}>
             {fmtEur(c.available_budget, true)}
           </p>
+          {c.available_budget_hours > 0 && (
+            <p className="text-xs text-slate-400">{fmtN(c.available_budget_hours, 0)} ore res.</p>
+          )}
         </td>
         <td className="px-4 py-3">
           <Semaforo status={c.coverage_status} />
+          {coverageLabel && c.coverage_status !== 'green' && (
+            <p className={`text-xs mt-0.5 ${c.coverage_status === 'red' ? 'text-red-500' : 'text-amber-600'}`}>
+              {coverageLabel}
+            </p>
+          )}
+          {c.exhaustion_type !== 'ok' && c.coverage_status !== 'green' && (
+            <p className="text-xs text-slate-400">{exhaustionLabel[c.exhaustion_type]}</p>
+          )}
         </td>
       </tr>
       {expanded && c.by_bu_forecast.length > 0 && (
@@ -402,7 +426,7 @@ function PrevisioningTab() {
               </tr>
             )}
             {clients.map((c, i) => (
-              <ForecastClientRow key={c.client_name} c={c} isLast={i === clients.length - 1} />
+              <ForecastClientRow key={c.client_name} c={c} isLast={i === clients.length - 1} weeksRemaining={weeks_remaining} />
             ))}
           </tbody>
           {clients.length > 1 && (
