@@ -111,6 +111,13 @@ export interface ProjectForecast {
   resources: ResourceBreakdown[]
 }
 
+export interface DashboardBuBreakdown {
+  bu: string
+  ts_hours: number
+  ts_net_revenue: number
+  pct_of_total: number
+}
+
 export interface DashboardFyBreakdown {
   fy: number
   project_count: number
@@ -119,13 +126,15 @@ export interface DashboardFyBreakdown {
   iow_net_revenue: number
   ts_net_revenue: number
   ts_hours: number
+  by_bu: DashboardBuBreakdown[]
 }
 
-export interface DashboardBuBreakdown {
-  bu: string
-  ts_hours: number
+export interface DashboardClientFy {
+  fy: number
   ts_net_revenue: number
-  pct_of_total: number
+  ts_hours: number
+  project_count: number
+  by_bu: DashboardBuBreakdown[]
 }
 
 export interface DashboardClient {
@@ -140,8 +149,46 @@ export interface DashboardClient {
   residuo_eur: number
   pct_consumo: number | null
   at_risk_count: number
-  by_fy: (Omit<DashboardFyBreakdown, 'project_count' | 'open_count' | 'closed_count' | 'iow_net_revenue'> & { project_count: number })[]
+  by_fy: DashboardClientFy[]
   by_bu: DashboardBuBreakdown[]
+}
+
+// ── Previsione chiusura FY ─────────────────────────────────────────────────
+
+export interface DashboardFyForecastBu {
+  bu: string
+  forecasted_nr: number
+  pct_of_forecast: number
+}
+
+export interface DashboardFyForecastClient {
+  client_name: string
+  client_group: string | null
+  ts_nr_ytd: number
+  ts_hours_ytd: number
+  run_rate_weekly_nr: number
+  run_rate_weekly_hours: number
+  projected_additional_nr: number
+  projected_total_nr: number
+  available_budget: number
+  coverage_status: 'green' | 'amber' | 'red' | 'grey'
+  by_bu_forecast: DashboardFyForecastBu[]
+}
+
+export interface DashboardFyForecast {
+  fy: number
+  fy_end: string
+  today: string
+  days_remaining: number
+  weeks_remaining: number
+  global: {
+    ts_nr_ytd: number
+    projected_additional_nr: number
+    projected_total_nr: number
+    available_budget: number
+    coverage_status: 'green' | 'amber' | 'red' | 'grey'
+  }
+  clients: DashboardFyForecastClient[]
 }
 
 export interface DashboardData {
@@ -316,6 +363,9 @@ export interface ImportRecord {
 export const api = {
   dashboard: (fy?: number) =>
     req<DashboardData>(`/dashboard${fy ? `?fy=${fy}` : ''}`),
+
+  fyForecast: (fy?: number) =>
+    req<DashboardFyForecast>(`/dashboard/fy-forecast${fy ? `?fy=${fy}` : ''}`),
 
   projects: (params?: { include_stale?: boolean; status?: string; fy?: number }) => {
     const q = new URLSearchParams()
