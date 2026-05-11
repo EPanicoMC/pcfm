@@ -1,6 +1,6 @@
 # PCFM — Project Code Forecast Manager · Stato progetto per handoff
 
-**Data aggiornamento:** 2026-05-11  
+**Data aggiornamento:** 2026-05-11 (wp12d)  
 **Stack:** FastAPI + SQLAlchemy + SQLite · React 18 + Vite + TailwindCSS · Python 3.10 · monorepo
 
 ---
@@ -108,6 +108,33 @@ POST /api/import/confirm          → importa file (auto-detect tipo 8 o 9)
 **Caricamenti settimanali:** tabella con filtri data (tutto / settimana / mese / range). Ogni riga espandibile ▸ mostra sub-tabella: Risorsa · CC · BU · Ore · Realizzo% · NR
 
 ---
+
+## wp12d — Fix Previsioning + Widget Ultima Settimana (completata 2026-05-11)
+
+**Fix fy_forecast (`/api/dashboard/fy-forecast`):**
+- Residuo NR/ore e run rate calcolati **solo su codici aperti** — codici "In Chiusura" esclusi da capacity e proiezione futura
+- Residuo usa `project_nr_actual` (File 9 autoritative) invece della somma timesheet, coerente con ProjectDetail
+
+**Nuovo endpoint `/api/dashboard/last-week`:**
+- Trova la settimana più recente con dati
+- Aggrega ore per risorsa + progetto
+- Calcola media 4 settimane precedenti per risorsa
+- Flagga anomalie: `high` (>+25%) / `low` (<-25%) / `normal` / `new`
+
+**Dashboard.tsx — LastWeekWidget:**
+- Sezione collassabile in fondo all'Overview tab
+- Tabella risorse: nome · BU · ore settimana · media 4w · Δ% · progetti
+- Badge rosso anomalie; righe evidenziate per high/low
+- "Mostra tutte" se > 8 risorse
+
+**Note metodologiche previsioning:**
+- Il run rate dal FY corrente non include codici chiusi → proiezione più accurata
+- La data saturazione del previsioning parte da OGGI (non da last_week_end come ProjectDetail) — differenza attesa
+- Il residuo ora usa File 9 NR actual quando disponibile → allineamento con la vista dettaglio
+
+**Nota giroconti (da investigare):**
+- Se alcuni clienti mostrano NR timesheet gonfiato rispetto alle aspettative, potrebbe essere dovuto a reclassifiche interne (giroconti)
+- Possibile filtro futuro: escludere righe con BU/OU/LOS specifici che identificano movimenti interni
 
 ## Schermata Projects — DA FARE (prossimo obiettivo)
 
