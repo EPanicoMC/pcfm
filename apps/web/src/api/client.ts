@@ -117,7 +117,7 @@ export interface DashboardCcBreakdown {
   ou: string | null
   ts_hours: number
   ts_net_revenue: number
-  pct_of_bu: number
+  pct_of_total: number
 }
 
 export interface DashboardBuBreakdown {

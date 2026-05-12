@@ -39,7 +39,7 @@ class DashboardCcBreakdown(BaseModel):
     ou: str | None
     ts_hours: float
     ts_net_revenue: float
-    pct_of_bu: float
+    pct_of_total: float
 
 class DashboardBuBreakdown(BaseModel):
     bu: str
@@ -56,7 +56,6 @@ def _make_bu_list(bu_dict: dict, total_nr: float) -> list[DashboardBuBreakdown]:
     # Ordina BU per NR decrescente
     for b in sorted(bu_dict.values(), key=lambda x: x["ts_net_revenue"], reverse=True):
         ccs = []
-        bu_nr = b["ts_net_revenue"]
         # Ordina CC per NR decrescente
         for c in sorted(b.get("_ccs", {}).values(), key=lambda x: x["ts_net_revenue"], reverse=True):
             ccs.append(DashboardCcBreakdown(
@@ -65,7 +64,7 @@ def _make_bu_list(bu_dict: dict, total_nr: float) -> list[DashboardBuBreakdown]:
                 ou=c["ou"],
                 ts_hours=round(c["ts_hours"], 1),
                 ts_net_revenue=round(c["ts_net_revenue"], 2),
-                pct_of_bu=round(c["ts_net_revenue"] / bu_nr * 100, 1) if bu_nr else 0.0
+                pct_of_total=round(c["ts_net_revenue"] / total_nr * 100, 1) if total_nr else 0.0
             ))
         res.append(DashboardBuBreakdown(
             bu=b["bu"],

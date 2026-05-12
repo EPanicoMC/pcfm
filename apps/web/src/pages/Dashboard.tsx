@@ -12,7 +12,6 @@ import {
   DashboardBuBreakdown,
   DashboardFyBreakdown,
   DashboardFyForecastClient,
-  DashboardFyForecastBu,
   LastWeekResource,
   LastWeekSummary,
   ResourceFte,
@@ -185,23 +184,87 @@ function FyChart({
 
 // ── BU breakdown ─────────────────────────────────────────────────────────────
 
-function BuBreakdown({ data }: { data: DashboardBuBreakdown[] }) {
+// ── Componente Tabella Gerarchica BU → CC ────────────────────────────────────
+interface BuCcBreakdownTableProps {
+  data: DashboardBuBreakdown[]
+  title?: string
+}
+
+function BuCcBreakdownTable({ data, title }: BuCcBreakdownTableProps) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(data.map(b => b.bu))) 
+
   if (!data.length) return <p className="text-slate-400 text-sm">Nessun dato BU.</p>
+
+  const toggle = (bu: string) => {
+    setExpanded(prev => {
+      const s = new Set(prev)
+      if (s.has(bu)) s.delete(bu)
+      else s.add(bu)
+      return s
+    })
+  }
+
   return (
-    <div className="space-y-4">
-      {data.map((bu) => (
-        <div key={bu.bu}>
-          <div className="flex justify-between text-xs mb-0.5">
-            <span className="font-medium text-slate-700 truncate max-w-[160px]">{bu.bu}</span>
-            <span className="text-slate-400 flex-shrink-0 ml-2">{fmtEur(bu.ts_net_revenue, true)} · {bu.pct_of_total.toFixed(1)}%</span>
-          </div>
-          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-            <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(bu.pct_of_total, 100)}%` }} />
-          </div>
+    <div className="space-y-2">
+      {title && <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 px-1">{title}</p>}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+        <div className="grid grid-cols-[2fr_1fr_1.2fr_0.8fr] gap-2 px-4 py-2 bg-slate-50 border-b border-slate-200 text-[10px] text-slate-400 uppercase tracking-wider font-bold">
+          <span>Struttura</span>
+          <span className="text-right">Ore</span>
+          <span className="text-right">NR (TS)</span>
+          <span className="text-right">%</span>
         </div>
-      ))}
+
+        {data.map((bu, i) => {
+          const isOpen = expanded.has(bu.bu)
+          return (
+            <div key={bu.bu} className={i > 0 ? 'border-t border-slate-100' : ''}>
+              {/* Riga BU */}
+              <div 
+                className="flex cursor-pointer hover:bg-slate-50 transition-colors group"
+                onClick={() => toggle(bu.bu)}
+              >
+                <div className="w-8 flex items-center justify-center text-slate-400 group-hover:text-slate-600">
+                  <span className="text-[10px] transform transition-transform" style={{ transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }}>
+                    ▼
+                  </span>
+                </div>
+                <div className="flex-1 grid grid-cols-[2fr_1fr_1.2fr_0.8fr] gap-2 pr-4 py-3 items-center">
+                  <span className="font-bold text-slate-800 text-sm">{bu.bu}</span>
+                  <span className="text-right font-medium text-slate-700 text-sm">
+                    {bu.ts_hours > 0 ? `${fmtN(bu.ts_hours)} h` : '—'}
+                  </span>
+                  <span className="text-right font-bold text-slate-900 text-sm">{fmtEur(bu.ts_net_revenue)}</span>
+                  <span className="text-right font-semibold text-slate-600 text-sm">{bu.pct_of_total.toFixed(1)}%</span>
+                </div>
+              </div>
+
+              {/* Righe CC */}
+              {isOpen && bu.cost_centers.map(cc => (
+                <div key={cc.cc_code} className="grid grid-cols-[2fr_1fr_1.2fr_0.8fr] gap-2 px-4 py-2.5 border-t border-slate-50 bg-slate-50/20 items-center">
+                  <div className="pl-8">
+                    <p className="text-slate-700 font-medium text-sm leading-tight">{cc.cc_name}</p>
+                    <p className="text-[10px] text-slate-400 font-mono mt-1">
+                      {cc.cc_code} {cc.ou ? `· ${cc.ou}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-right text-slate-600 text-sm">
+                    {cc.ts_hours > 0 ? `${fmtN(cc.ts_hours)} h` : '—'}
+                  </span>
+                  <span className="text-right font-medium text-slate-700 text-sm">{fmtEur(cc.ts_net_revenue)}</span>
+                  <span className="text-right text-slate-400 text-sm">{cc.pct_of_total.toFixed(1)}%</span>
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
+}
+
+function BuBreakdown({ data }: { data: DashboardBuBreakdown[] }) {
+  return <BuCcBreakdownTable data={data} />
 }
 
 // ── Tab selector ──────────────────────────────────────────────────────────────
@@ -345,43 +408,26 @@ function ForecastClientRow({
           <td colSpan={7} className={`bg-slate-50 px-8 py-4 ${borderBottom}`}>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-              {/* BU→CC breakdown previsto (come richiesto dallo screenshot) */}
+              {/* BU→CC breakdown previsto (tabella uniforme) */}
               {c.by_bu_forecast.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Breakdown BU previsto</p>
-                  <div className="space-y-2.5">
-                    {c.by_bu_forecast.map((bu: DashboardFyForecastBu) => (
-                      <div key={bu.bu}>
-                        {/* Riga Business Unit */}
-                        <div className="flex justify-between text-xs mb-0.5">
-                          <span className="font-semibold text-slate-700">{bu.bu}</span>
-                          <span className="text-slate-600 font-medium">
-                            {fmtEur(bu.forecasted_nr, true)} · {bu.pct_of_forecast.toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden mb-1">
-                          <div className="h-full bg-blue-400 rounded-full" style={{ width: `${bu.pct_of_forecast}%` }} />
-                        </div>
-                        {/* Sub-righe Centro di Costo (sempre espanse se presenti) */}
-                        <div className="pl-3 space-y-1.5 border-l-2 border-slate-100 ml-1 mt-1">
-                          {bu.by_cc.map((cc) => (
-                            <div key={cc.cc_code} className="flex justify-between items-start text-xs">
-                              <div>
-                                <p className="text-slate-700 font-medium leading-tight">{cc.cc_name}</p>
-                                <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                                  {cc.cc_code} {cc.ou ? `· ${cc.ou}` : ''}
-                                </p>
-                              </div>
-                              <div className="text-right flex-shrink-0 ml-2">
-                                <p className="text-slate-600">{fmtEur(cc.forecasted_nr, true)}</p>
-                                <p className="text-[10px] text-slate-400">{cc.pct_of_bu.toFixed(0)}% BU</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                <div className="lg:col-span-1">
+                  <BuCcBreakdownTable 
+                    title="Breakdown BU previsto"
+                    data={c.by_bu_forecast.map(bu => ({
+                      bu: bu.bu,
+                      ts_hours: 0, // Il forecast non include ore proiettate per BU
+                      ts_net_revenue: bu.forecasted_nr,
+                      pct_of_total: bu.pct_of_forecast,
+                      cost_centers: bu.by_cc.map(cc => ({
+                        cc_code: cc.cc_code,
+                        cc_name: cc.cc_name,
+                        ou: cc.ou,
+                        ts_hours: 0,
+                        ts_net_revenue: cc.forecasted_nr,
+                        pct_of_total: cc.pct_of_forecast
+                      }))
+                    }))} 
+                  />
                 </div>
               )}
 
@@ -884,14 +930,22 @@ function AllocationFormPanel({
               {saving ? 'Salvataggio...' : 'Salva'}
             </button>
           )}
-          {rows.length === 0 && fteData && (
+          {fteData && (
             <button
-              onClick={handlePrecompile}
+              onClick={() => {
+                if (rows.length > 0 && !confirm('Questo sovrascriverà le allocazioni attuali con i suggerimenti basati sullo storico. Continuare?')) return
+                handlePrecompile()
+              }}
               disabled={precompiling}
               title="Suggerisce le coppie risorsa × cliente in base allo storico FY corrente"
-              className="px-3 py-1.5 border border-blue-200 rounded-lg text-sm text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+              className="px-3 py-1.5 border border-blue-200 rounded-lg text-sm text-blue-600 hover:bg-blue-50 disabled:opacity-50 flex items-center gap-1.5"
             >
-              {precompiling ? '...' : '⟳ Pre-compila da storico'}
+              {precompiling ? '...' : (
+                <>
+                  <span className="text-lg leading-none">⟳</span>
+                  {rows.length > 0 ? 'Aggiorna da storico' : 'Pre-compila da storico'}
+                </>
+              )}
             </button>
           )}
           <button
