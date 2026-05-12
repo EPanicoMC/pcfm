@@ -111,11 +111,21 @@ export interface ProjectForecast {
   resources: ResourceBreakdown[]
 }
 
+export interface DashboardCcBreakdown {
+  cc_code: string
+  cc_name: string
+  ou: string | null
+  ts_hours: number
+  ts_net_revenue: number
+  pct_of_bu: number
+}
+
 export interface DashboardBuBreakdown {
   bu: string
   ts_hours: number
   ts_net_revenue: number
   pct_of_total: number
+  cost_centers: DashboardCcBreakdown[]
 }
 
 export interface DashboardFyBreakdown {
@@ -155,7 +165,9 @@ export interface DashboardClient {
 
 // ── Previsione chiusura FY ─────────────────────────────────────────────────
 
-export interface DashboardFyForecastOu {
+export interface DashboardFyForecastCc {
+  cc_code: string
+  cc_name: string
   ou: string
   forecasted_nr: number
   pct_of_forecast: number
@@ -166,7 +178,7 @@ export interface DashboardFyForecastBu {
   bu: string
   forecasted_nr: number
   pct_of_forecast: number
-  by_ou: DashboardFyForecastOu[]
+  by_cc: DashboardFyForecastCc[]
 }
 
 export interface DashboardFyForecastClient {

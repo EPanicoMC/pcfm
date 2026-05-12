@@ -12,6 +12,7 @@ import {
   DashboardBuBreakdown,
   DashboardFyBreakdown,
   DashboardFyForecastClient,
+  DashboardFyForecastBu,
   LastWeekResource,
   LastWeekSummary,
   ResourceFte,
@@ -187,7 +188,7 @@ function FyChart({
 function BuBreakdown({ data }: { data: DashboardBuBreakdown[] }) {
   if (!data.length) return <p className="text-slate-400 text-sm">Nessun dato BU.</p>
   return (
-    <div className="space-y-2">
+    <div className="space-y-4">
       {data.map((bu) => (
         <div key={bu.bu}>
           <div className="flex justify-between text-xs mb-0.5">
@@ -344,32 +345,40 @@ function ForecastClientRow({
           <td colSpan={7} className={`bg-slate-50 px-8 py-4 ${borderBottom}`}>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-              {/* BU+OU breakdown previsto */}
+              {/* BU→CC breakdown previsto (come richiesto dallo screenshot) */}
               {c.by_bu_forecast.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Breakdown BU previsto</p>
                   <div className="space-y-2.5">
-                    {c.by_bu_forecast.map((bu) => (
+                    {c.by_bu_forecast.map((bu: DashboardFyForecastBu) => (
                       <div key={bu.bu}>
-                        {/* Riga BU */}
+                        {/* Riga Business Unit */}
                         <div className="flex justify-between text-xs mb-0.5">
                           <span className="font-semibold text-slate-700">{bu.bu}</span>
-                          <span className="text-slate-600 font-medium">{fmtEur(bu.forecasted_nr, true)} · {bu.pct_of_forecast.toFixed(1)}%</span>
+                          <span className="text-slate-600 font-medium">
+                            {fmtEur(bu.forecasted_nr, true)} · {bu.pct_of_forecast.toFixed(1)}%
+                          </span>
                         </div>
                         <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden mb-1">
                           <div className="h-full bg-blue-400 rounded-full" style={{ width: `${bu.pct_of_forecast}%` }} />
                         </div>
-                        {/* Sub-righe OU (se più di uno o nome diverso da BU) */}
-                        {bu.by_ou.length > 1 && (
-                          <div className="pl-3 space-y-0.5 border-l-2 border-slate-100 ml-1">
-                            {bu.by_ou.map((ou) => (
-                              <div key={ou.ou} className="flex justify-between text-xs text-slate-500">
-                                <span>{ou.ou}</span>
-                                <span>{fmtEur(ou.forecasted_nr, true)} · {ou.pct_of_bu.toFixed(0)}% BU</span>
+                        {/* Sub-righe Centro di Costo (sempre espanse se presenti) */}
+                        <div className="pl-3 space-y-1.5 border-l-2 border-slate-100 ml-1 mt-1">
+                          {bu.by_cc.map((cc) => (
+                            <div key={cc.cc_code} className="flex justify-between items-start text-xs">
+                              <div>
+                                <p className="text-slate-700 font-medium leading-tight">{cc.cc_name}</p>
+                                <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                  {cc.cc_code} {cc.ou ? `· ${cc.ou}` : ''}
+                                </p>
                               </div>
-                            ))}
-                          </div>
-                        )}
+                              <div className="text-right flex-shrink-0 ml-2">
+                                <p className="text-slate-600">{fmtEur(cc.forecasted_nr, true)}</p>
+                                <p className="text-[10px] text-slate-400">{cc.pct_of_bu.toFixed(0)}% BU</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1659,7 +1668,7 @@ export default function Dashboard() {
                 A rischio ({activeAtRisk.length})
               </h2>
               {activeAtRisk.length === 0 ? (
-                <p className="text-slate-400 text-sm">Nessun codice a rischio esaurimento ≤ 60gg.</p>
+                <p className="text-slate-400 text-sm">Nessun codice a rischio esaurimento ≤ 30gg.</p>
               ) : (
                 <div className="space-y-2">
                   {activeAtRisk.map((p) => (

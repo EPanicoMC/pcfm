@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..models.dimensions import DimCostCenter, DimResource, DimWeek
 from ..models.facts import FactProject, FactTimesheet
+from ..models.giroconti import GirocontoTag
 
 
 def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
@@ -219,8 +220,13 @@ def get_project_detail(db: Session, project_id: str) -> dict[str, Any]:
         key=lambda x: x["week_id"], reverse=True,
     )
 
+    # ── Giroconti ─────────────────────────────────────────────────────────────
+    giroconti_rows = db.query(GirocontoTag.week_id).filter(GirocontoTag.project_id == project_id).all()
+    giroconti_set = {r[0] for r in giroconti_rows}
+
     # ── Forecast basato su settimane attive (TS importati) ────────────────────
-    active_wids = [w["week_id"] for w in weekly_list if w["has_activity"]]
+    # Escludi le settimane taggate come giroconto dal calcolo delle medie/forecast
+    active_wids = [w["week_id"] for w in weekly_list if w["has_activity"] and w["week_id"] not in giroconti_set]
     forecast = _calc_weekly_forecast(active_wids, weekly, residuo_eur)
 
     # ── Realizzo e margine ────────────────────────────────────────────────────

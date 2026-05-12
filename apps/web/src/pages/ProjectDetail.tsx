@@ -541,7 +541,13 @@ function WeeklySection({
       tag
         ? api.tagGiroconto(projectId, week_id, 'Giroconto')
         : api.untagGiroconto(projectId, week_id).then(() => null),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['giroconti', projectId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['giroconti', projectId] })
+      // Ricalcola previsioning: i giroconti vengono esclusi dal run rate
+      queryClient.invalidateQueries({ queryKey: ['dashboard-fy-forecast'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['project-detail', projectId] })
+    },
   })
 
   const weeklyMap = useMemo(() => new Map(weekly.map(w => [w.week_id, w])), [weekly])
